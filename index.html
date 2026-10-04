@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Beam Analyzer</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#f4f6f8;color:#222}
+h1{margin:0;padding:12px 16px;background:#1f3a5f;color:#fff;font-size:20px}
+.wrap{display:flex;flex-wrap:wrap;gap:12px;padding:12px}
+.card{background:#fff;border-radius:8px;padding:12px;box-shadow:0 1px 3px #0002}
+.left{flex:1 1 300px;max-width:400px}.right{flex:3 1 480px;min-width:0}
+h3{margin:10px 0 2px;font-size:15px}
+label{display:block;font-size:12px;margin-top:6px}
+input,select,button{padding:6px;font-size:14px;width:100%;box-sizing:border-box}
+.row{display:flex;gap:6px}
+button{background:#1f3a5f;color:#fff;border:0;border-radius:5px;margin-top:8px;cursor:pointer}
+button.g{background:#777}
+li{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid #eee}
+li b{color:#c00;cursor:pointer;padding:0 6px}
+ul{padding:0;margin:4px 0;list-style:none}
+canvas{width:100%;display:block;margin-bottom:6px;border:1px solid #e3e3e3;border-radius:4px}
+pre{font-size:12px;background:#f0f0f0;padding:8px;overflow:auto;margin:0 0 8px}
+</style></head><body>
+<h1>Beam Analyzer &ndash; Axial, Shear &amp; Bending Moment Diagrams</h1>
+<div class="wrap">
+<div class="card left">
+ <h3>Beam</h3>
+ <label>Length L (m)</label><input id="L" type="number" value="10">
+ <label>Support type</label>
+ <select id="sup"><option value="s">Simply supported (pin + roller)</option><option value="fl">Cantilever, fixed at left</option><option value="fr">Cantilever, fixed at right</option></select>
+ <div class="row" id="sbox"><div><label>Pin x (m)</label><input id="px" type="number" value="0"></div><div><label>Roller x (m)</label><input id="rx" type="number" value="8"></div></div>
+ <h3>Add load</h3>
+ <select id="type"></select>
+ <div id="fields"></div>
+ <button id="add">+ Add load</button>
+ <div class="row"><button class="g" id="ex">Example</button><button class="g" id="clr">Clear all</button></div>
+ <h3>Loads</h3><ul id="list"></ul>
+ <div style="font-size:11px;color:#666">Signs: downward load +, clockwise moment +, axial &rarr; (right) +. Output: tension +, sagging +.</div>
+</div>
+<div class="right card">
+ <pre id="rep"></pre>
+ <canvas id="c0" width="900" height="230"></canvas>
+ <canvas id="c1" width="900" height="200"></canvas>
+ <canvas id="c2" width="900" height="200"></canvas>
+ <canvas id="c3" width="900" height="200"></canvas>
+</div></div>
+<script>
+const $=id=>document.getElementById(id), f=v=>(+v).toFixed(2);
+const T={point:['Position x (m)','Load P (kN, down +)'],udl:['Start a (m)','End b (m)','w (kN/m, down +)'],
+uvl:['Start a (m)','End b (m)','w at a (kN/m)','w at b (kN/m)'],moment:['Position x (m)','Moment M (kN.m, clockwise +)'],
+axial:['Position x (m)','Force N (kN, right +)'],axial_udl:['Start a (m)','End b (m)','q (kN/m, right +)']};
+const NAMES={point:'Point load',udl:'UDL',uvl:'Triangular/varying (UVL)',moment:'Moment',axial:'Axial force',axial_udl:'Axial distributed'};
+const EX=()=>[{t:'point',v:[2,20]},{t:'udl',v:[3,7,10]},{t:'uvl',v:[0,3,0,12]},{t:'moment',v:[5,25]},{t:'point',v:[9,15]},{t:'axial',v:[4,30]},{t:'axial',v:[10,-10]}];
+let loads=EX();
+for(const k in NAMES)$('type').add(new Option(NAMES[k],k));
+function fields(){const t=$('type').value;$('fields').innerHTML=T[t].map((s,i)=>`<label>${s}</label><input type="number" step="any" id="i${i}" value="0">`).join('')}
+function list(){$('list').innerHTML=loads.map((l,i)=>`<li><span>${NAMES[l.t]}: ${l.v.join(', ')}</span><b onclick="loads.splice(${i},1);list();calc()">&times;</b></li>`).join('')}
+$('type').onchange=fields;
+$('add').onclick=()=>{const t=$('type').value,v=T[t].map((_,i)=>+$('i'+i).value);
+ if(v.some(isNaN))return;if(['udl','uvl','axial_udl'].includes(t)&&v[1]<=v[0])return alert('End b must be greater than start a');
+ loads.push({t,v});list();calc()};
+$('ex').onclick=()=>{loads=EX();list();calc()};
+$('clr').onclick=()=>{loads=[];list();calc()};
+['L','sup','px','rx'].forEach(i=>$(i).oninput=calc);
+
+function solve(){
+ const L=+$('L').value,S=$('sup').value,px=+$('px').value,rx=+$('rx').value;
+ const pts=[],ds=[],ms=[],ap=[],ad=[];
+ loads.forEach(({t,v})=>{
+  if(t=='point')pts.push([v[0],v[1]]);else if(t=='udl')ds.push([v[0],v[1],v[2],v[2]]);
+  else if(t=='uvl')ds.push([v[0],v[1],v[2],v[3]]);else if(t=='moment')ms.push([v[0],v[1]]);
+  else if(t=='axial')ap.push([v[0],v[1]]);else ad.push([v[0],v[1],v[2]])});
+ const F=d=>.5*(d[2]+d[3])*(d[1]-d[0]);
+ const cwm=xr=>{let m=0;pts.forEach(p=>m+=p[1]*(p[0]-xr));ms.forEach(q=>m+=q[1]);
+  ds.forEach(d=>{const l=d[1]-d[0];m+=F(d)*(d[0]-xr)+l*l*(d[2]+2*d[3])/6});return m};
+ const W=pts.reduce((s,p)=>s+p[1],0)+ds.reduce((s,d)=>s+F(d),0);
+ const Fx=ap.reduce((s,p)=>s+p[1],0)+ad.reduce((s,d)=>s+d[2]*(d[1]-d[0]),0);
+ let RV,RM=[],RH;
+ if(S=='s'){if(rx==px)return null;const Rb=cwm(px)/(rx-px);RV=[[px,W-Rb],[rx,Rb]];RH=[[px,-Fx]]}
+ else{const xf=S=='fl'?0:L;RV=[[xf,W]];RM=[[xf,-cwm(xf)]];RH=[[xf,-Fx]]}
+ const P2=pts.concat(RV.map(r=>[r[0],-r[1]])),M2=ms.concat(RM),A2=ap.concat(RH);
+ const sec=x=>{let V=0,M=0,X=0;
+  P2.forEach(([xi,P])=>{if(xi<x){V-=P;M-=P*(x-xi)}});
+  M2.forEach(([xi,m])=>{if(xi<x)M+=m});
+  ds.forEach(d=>{if(x>d[0]){const l=Math.min(x,d[1])-d[0],wc=d[2]+(d[3]-d[2])*l/(d[1]-d[0]),Fc=.5*(d[2]+wc)*l;
+   V-=Fc;M-=Fc*(x-d[0])-l*l*(d[2]+2*wc)/6}});
+  A2.forEach(([xi,q])=>{if(xi<x)X+=q});
+  ad.forEach(d=>{if(x>d[0])X+=d[2]*(Math.min(x,d[1])-d[0])});
+  return [-X,V,M]};
+ const e=1e-9,keys=[0,L];
+ P2.concat(M2,A2).forEach(p=>keys.push(p[0]));ds.concat(ad).forEach(d=>keys.push(d[0],d[1]));
+ let xs=[];for(let i=0;i<=600;i++)xs.push(L*i/600);
+ keys.forEach(k=>xs.push(k-e,k+e));
+ xs=xs.filter(x=>x>=-2*e&&x<=L+2*e).sort((a,b)=>a-b);
+ const N=[],V=[],M=[];
+ xs.forEach(x=>{const r=sec(x);N.push(Math.abs(r[0])<1e-9?0:r[0]);V.push(Math.abs(r[1])<1e-9?0:r[1]);M.push(Math.abs(r[2])<1e-9?0:r[2])});
+ return {L,S,pts,ds,ms,ap,ad,RV,RM,RH,xs,N,V,M};
+}
+function arr(g,x1,y1,x2,y2,c){g.strokeStyle=g.fillStyle=c;g.lineWidth=2;g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();
+ const a=Math.atan2(y2-y1,x2-x1);g.beginPath();g.moveTo(x2,y2);g.lineTo(x2-9*Math.cos(a-.4),y2-9*Math.sin(a-.4));g.lineTo(x2-9*Math.cos(a+.4),y2-9*Math.sin(a+.4));g.fill()}
+function plot(id,r,ys,col,title,inv){
+ const c=$(id),g=c.getContext('2d'),W=c.width,H=c.height,m=45,p=28,xs=r.xs;
+ g.clearRect(0,0,W,H);
+ let lo=Math.min(0,...ys),hi=Math.max(0,...ys);if(hi-lo<1e-9){hi=1;lo=-1}
+ const X=x=>m+x/r.L*(W-2*m),Y=y=>inv?p+(y-lo)/(hi-lo)*(H-2*p):H-p-(y-lo)/(hi-lo)*(H-2*p);
+ g.fillStyle=col+'44';g.strokeStyle=col;g.lineWidth=2;g.beginPath();g.moveTo(X(xs[0]),Y(0));
+ xs.forEach((x,i)=>g.lineTo(X(x),Y(ys[i])));g.lineTo(X(xs[xs.length-1]),Y(0));g.closePath();g.fill();
+ g.beginPath();xs.forEach((x,i)=>i?g.lineTo(X(x),Y(ys[i])):g.moveTo(X(x),Y(ys[i])));g.stroke();
+ g.strokeStyle='#000';g.lineWidth=1;g.beginPath();g.moveTo(m,Y(0));g.lineTo(W-m,Y(0));g.stroke();
+ g.fillStyle='#000';g.font='bold 13px sans-serif';g.textAlign='left';g.fillText(title,8,15);
+ g.font='12px sans-serif';g.textAlign='center';
+ [ys.indexOf(Math.max(...ys)),ys.indexOf(Math.min(...ys))].forEach(i=>{if(Math.abs(ys[i])>1e-6)
+  g.fillText(f(ys[i]),X(xs[i]),Y(ys[i])+((ys[i]>0)!=inv?-6:15))});
+}
+function loadsFig(r){
+ const c=$('c0'),g=c.getContext('2d'),W=c.width,L=r.L,X=x=>45+x/L*(W-90),by=110;
+ g.clearRect(0,0,W,c.height);g.font='12px sans-serif';g.textAlign='center';
+ const wm=Math.max(1,...r.ds.map(d=>Math.max(Math.abs(d[2]),Math.abs(d[3]))));
+ g.fillStyle='#000';g.font='bold 13px sans-serif';g.textAlign='left';g.fillText('Loading diagram',8,15);g.font='12px sans-serif';g.textAlign='center';
+ g.lineWidth=6;g.strokeStyle='#222';g.beginPath();g.moveTo(X(0),by);g.lineTo(X(L),by);g.stroke();
+ r.RV.forEach(a=>{if(r.S=='s'){g.fillStyle='#888';g.beginPath();g.moveTo(X(a[0]),by+4);g.lineTo(X(a[0])-10,by+22);g.lineTo(X(a[0])+10,by+22);g.fill()}
+  else{g.fillStyle='#555';g.fillRect(X(a[0])-4,by-28,8,56)}});
+ r.pts.forEach(([x,P])=>{const s=P>=0?1:-1;arr(g,X(x),by-s*65,X(x),by-s*4,'#d22');g.fillStyle='#d22';g.fillText(P+' kN',X(x),by-s*70+(s<0?12:0))});
+ r.ds.forEach(d=>{const n=14;let tp=[];for(let i=0;i<=n;i++){const x=d[0]+(d[1]-d[0])*i/n,h=50*(d[2]+(d[3]-d[2])*i/n)/wm;tp.push([X(x),by-h]);
+  if(Math.abs(h)>4)arr(g,X(x),by-h,X(x),by-(h>0?4:-4),'#25b')}
+  g.strokeStyle='#25b';g.lineWidth=2;g.beginPath();tp.forEach((q,i)=>i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]));g.stroke();
+  g.fillStyle='#25b';g.fillText(d[2]==d[3]?d[2]+' kN/m':d[2]+'→'+d[3]+' kN/m',X((d[0]+d[1])/2),by-62)});
+ r.ms.forEach(([x,M])=>{g.fillStyle='#808';g.fillText((M>0?'\u21BB ':'\u21BA ')+Math.abs(M)+' kN.m',X(x),by+40)});
+ r.ap.forEach(([x,N])=>{arr(g,X(x),by+62,X(x)+(N>=0?45:-45),by+62,'#1a7');g.fillStyle='#1a7';g.fillText(N+' kN',X(x),by+80)});
+ r.ad.forEach(d=>{arr(g,d[2]>=0?X(d[0]):X(d[1]),by+100,d[2]>=0?X(d[1]):X(d[0]),by+100,'#1a7');g.fillStyle='#1a7';g.fillText(d[2]+' kN/m',X((d[0]+d[1])/2),by+116)});
+}
+function calc(){
+ const r=solve();if(!r){$('rep').textContent='Invalid support positions';return}
+ const mx=(a,fn)=>{const v=fn(...a);return [v,r.xs[a.indexOf(v)]]};
+ let t='REACTIONS\n';
+ r.RV.forEach(a=>t+=`  Vertical   @ x=${f(a[0])} m : ${f(a[1])} kN (up +)\n`);
+ r.RH.forEach(a=>t+=`  Horizontal @ x=${f(a[0])} m : ${f(a[1])} kN (right +)\n`);
+ r.RM.forEach(a=>t+=`  Moment     @ x=${f(a[0])} m : ${f(a[1])} kN.m (clockwise +)\n`);
+ const A=mx(r.V.map(Math.abs),Math.max),B=mx(r.M,Math.max),C=mx(r.M,Math.min),D=mx(r.N.map(Math.abs),Math.max);
+ t+=`\nMax |shear|    : ${f(A[0])} kN @ x=${f(A[1])} m\nMax +moment    : ${f(B[0])} kN.m @ x=${f(B[1])} m\nMax -moment    : ${f(C[0])} kN.m @ x=${f(C[1])} m\nMax |axial|    : ${f(D[0])} kN @ x=${f(D[1])} m\nEnd check V,M  : ${f(r.V.at(-1))}, ${f(r.M.at(-1))} (should be 0)`;
+ $('rep').textContent=t;
+ loadsFig(r);plot('c1',r,r.N,'#1a7','Axial force diagram N (kN) - tension +');
+ plot('c2',r,r.V,'#25b','Shear force diagram V (kN)');
+ plot('c3',r,r.M,'#d22','Bending moment diagram M (kN.m) - sagging plotted downward',true);
+}
+function sup(){$('sbox').style.display=$('sup').value=='s'?'flex':'none'}
+$('sup').addEventListener('change',sup);
+fields();list();sup();calc();
+</script></body></html>
