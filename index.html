@@ -1,147 +1,443 @@
 <!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Beam Analyzer</title>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beam Calculator</title>
 <style>
-body{font-family:system-ui,sans-serif;margin:0;background:#f4f6f8;color:#222}
-h1{margin:0;padding:12px 16px;background:#1f3a5f;color:#fff;font-size:20px}
-.wrap{display:flex;flex-wrap:wrap;gap:12px;padding:12px}
-.card{background:#fff;border-radius:8px;padding:12px;box-shadow:0 1px 3px #0002}
-.left{flex:1 1 300px;max-width:400px}.right{flex:3 1 480px;min-width:0}
-h3{margin:10px 0 2px;font-size:15px}
-label{display:block;font-size:12px;margin-top:6px}
-input,select,button{padding:6px;font-size:14px;width:100%;box-sizing:border-box}
-.row{display:flex;gap:6px}
-button{background:#1f3a5f;color:#fff;border:0;border-radius:5px;margin-top:8px;cursor:pointer}
-button.g{background:#777}
-li{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid #eee}
-li b{color:#c00;cursor:pointer;padding:0 6px}
-ul{padding:0;margin:4px 0;list-style:none}
-canvas{width:100%;display:block;margin-bottom:6px;border:1px solid #e3e3e3;border-radius:4px}
-pre{font-size:12px;background:#f0f0f0;padding:8px;overflow:auto;margin:0 0 8px}
-</style></head><body>
-<h1>Beam Analyzer &ndash; Axial, Shear &amp; Bending Moment Diagrams</h1>
-<div class="wrap">
-<div class="card left">
- <h3>Beam</h3>
- <label>Length L (m)</label><input id="L" type="number" value="10">
- <label>Support type</label>
- <select id="sup"><option value="s">Simply supported (pin + roller)</option><option value="fl">Cantilever, fixed at left</option><option value="fr">Cantilever, fixed at right</option></select>
- <div class="row" id="sbox"><div><label>Pin x (m)</label><input id="px" type="number" value="0"></div><div><label>Roller x (m)</label><input id="rx" type="number" value="8"></div></div>
- <h3>Add load</h3>
- <select id="type"></select>
- <div id="fields"></div>
- <button id="add">+ Add load</button>
- <div class="row"><button class="g" id="ex">Example</button><button class="g" id="clr">Clear all</button></div>
- <h3>Loads</h3><ul id="list"></ul>
- <div style="font-size:11px;color:#666">Signs: downward load +, clockwise moment +, axial &rarr; (right) +. Output: tension +, sagging +.</div>
-</div>
-<div class="right card">
- <pre id="rep"></pre>
- <canvas id="c0" width="900" height="230"></canvas>
- <canvas id="c1" width="900" height="200"></canvas>
- <canvas id="c2" width="900" height="200"></canvas>
- <canvas id="c3" width="900" height="200"></canvas>
-</div></div>
-<script>
-const $=id=>document.getElementById(id), f=v=>(+v).toFixed(2);
-const T={point:['Position x (m)','Load P (kN, down +)'],udl:['Start a (m)','End b (m)','w (kN/m, down +)'],
-uvl:['Start a (m)','End b (m)','w at a (kN/m)','w at b (kN/m)'],moment:['Position x (m)','Moment M (kN.m, clockwise +)'],
-axial:['Position x (m)','Force N (kN, right +)'],axial_udl:['Start a (m)','End b (m)','q (kN/m, right +)']};
-const NAMES={point:'Point load',udl:'UDL',uvl:'Triangular/varying (UVL)',moment:'Moment',axial:'Axial force',axial_udl:'Axial distributed'};
-const EX=()=>[{t:'point',v:[2,20]},{t:'udl',v:[3,7,10]},{t:'uvl',v:[0,3,0,12]},{t:'moment',v:[5,25]},{t:'point',v:[9,15]},{t:'axial',v:[4,30]},{t:'axial',v:[10,-10]}];
-let loads=EX();
-for(const k in NAMES)$('type').add(new Option(NAMES[k],k));
-function fields(){const t=$('type').value;$('fields').innerHTML=T[t].map((s,i)=>`<label>${s}</label><input type="number" step="any" id="i${i}" value="0">`).join('')}
-function list(){$('list').innerHTML=loads.map((l,i)=>`<li><span>${NAMES[l.t]}: ${l.v.join(', ')}</span><b onclick="loads.splice(${i},1);list();calc()">&times;</b></li>`).join('')}
-$('type').onchange=fields;
-$('add').onclick=()=>{const t=$('type').value,v=T[t].map((_,i)=>+$('i'+i).value);
- if(v.some(isNaN))return;if(['udl','uvl','axial_udl'].includes(t)&&v[1]<=v[0])return alert('End b must be greater than start a');
- loads.push({t,v});list();calc()};
-$('ex').onclick=()=>{loads=EX();list();calc()};
-$('clr').onclick=()=>{loads=[];list();calc()};
-['L','sup','px','rx'].forEach(i=>$(i).oninput=calc);
+  body { font-family: Arial; margin: 10px; background: #eef1f5; }
+  .box { background: white; padding: 12px; margin-bottom: 10px; border-radius: 6px; }
+  input, select { padding: 4px; margin: 3px; width: 90px; }
+  select { width: auto; }
+  button { padding: 6px 12px; margin: 3px; }
+  canvas { width: 100%; border: 1px solid #ccc; margin-bottom: 6px; }
+  pre { background: #f0f0f0; padding: 8px; }
+</style>
+</head>
+<body>
 
-function solve(){
- const L=+$('L').value,S=$('sup').value,px=+$('px').value,rx=+$('rx').value;
- const pts=[],ds=[],ms=[],ap=[],ad=[];
- loads.forEach(({t,v})=>{
-  if(t=='point')pts.push([v[0],v[1]]);else if(t=='udl')ds.push([v[0],v[1],v[2],v[2]]);
-  else if(t=='uvl')ds.push([v[0],v[1],v[2],v[3]]);else if(t=='moment')ms.push([v[0],v[1]]);
-  else if(t=='axial')ap.push([v[0],v[1]]);else ad.push([v[0],v[1],v[2]])});
- const F=d=>.5*(d[2]+d[3])*(d[1]-d[0]);
- const cwm=xr=>{let m=0;pts.forEach(p=>m+=p[1]*(p[0]-xr));ms.forEach(q=>m+=q[1]);
-  ds.forEach(d=>{const l=d[1]-d[0];m+=F(d)*(d[0]-xr)+l*l*(d[2]+2*d[3])/6});return m};
- const W=pts.reduce((s,p)=>s+p[1],0)+ds.reduce((s,d)=>s+F(d),0);
- const Fx=ap.reduce((s,p)=>s+p[1],0)+ad.reduce((s,d)=>s+d[2]*(d[1]-d[0]),0);
- let RV,RM=[],RH;
- if(S=='s'){if(rx==px)return null;const Rb=cwm(px)/(rx-px);RV=[[px,W-Rb],[rx,Rb]];RH=[[px,-Fx]]}
- else{const xf=S=='fl'?0:L;RV=[[xf,W]];RM=[[xf,-cwm(xf)]];RH=[[xf,-Fx]]}
- const P2=pts.concat(RV.map(r=>[r[0],-r[1]])),M2=ms.concat(RM),A2=ap.concat(RH);
- const sec=x=>{let V=0,M=0,X=0;
-  P2.forEach(([xi,P])=>{if(xi<x){V-=P;M-=P*(x-xi)}});
-  M2.forEach(([xi,m])=>{if(xi<x)M+=m});
-  ds.forEach(d=>{if(x>d[0]){const l=Math.min(x,d[1])-d[0],wc=d[2]+(d[3]-d[2])*l/(d[1]-d[0]),Fc=.5*(d[2]+wc)*l;
-   V-=Fc;M-=Fc*(x-d[0])-l*l*(d[2]+2*wc)/6}});
-  A2.forEach(([xi,q])=>{if(xi<x)X+=q});
-  ad.forEach(d=>{if(x>d[0])X+=d[2]*(Math.min(x,d[1])-d[0])});
-  return [-X,V,M]};
- const e=1e-9,keys=[0,L];
- P2.concat(M2,A2).forEach(p=>keys.push(p[0]));ds.concat(ad).forEach(d=>keys.push(d[0],d[1]));
- let xs=[];for(let i=0;i<=600;i++)xs.push(L*i/600);
- keys.forEach(k=>xs.push(k-e,k+e));
- xs=xs.filter(x=>x>=-2*e&&x<=L+2*e).sort((a,b)=>a-b);
- const N=[],V=[],M=[];
- xs.forEach(x=>{const r=sec(x);N.push(Math.abs(r[0])<1e-9?0:r[0]);V.push(Math.abs(r[1])<1e-9?0:r[1]);M.push(Math.abs(r[2])<1e-9?0:r[2])});
- return {L,S,pts,ds,ms,ap,ad,RV,RM,RH,xs,N,V,M};
+<h2>Beam Calculator</h2>
+
+<div class="box">
+  <h3>1. Beam</h3>
+  Length (m): <input id="length" type="number" value="10"><br>
+  Support:
+  <select id="support">
+    <option value="simple">Simply supported</option>
+    <option value="left">Fixed at left end</option>
+    <option value="right">Fixed at right end</option>
+  </select><br>
+  Pin position (m): <input id="pin" type="number" value="0">
+  Roller position (m): <input id="roller" type="number" value="8">
+  <br><small>(pin and roller are used only for "Simply supported")</small>
+
+  <h3>2. Add a load</h3>
+  Type:
+  <select id="type">
+    <option value="point">Point load</option>
+    <option value="udl">UDL (uniform load)</option>
+    <option value="uvl">UVL (triangle / varying load)</option>
+    <option value="moment">Moment</option>
+    <option value="axial">Axial force</option>
+  </select><br>
+  a: <input id="a" type="number" value="0">
+  b: <input id="b" type="number" value="0">
+  v1: <input id="v1" type="number" value="0">
+  v2: <input id="v2" type="number" value="0">
+  <br>
+  <small>
+    Point load: a = position, v1 = load (kN, down is +)<br>
+    UDL: a = start, b = end, v1 = load (kN/m)<br>
+    UVL: a = start, b = end, v1 = load at start, v2 = load at end (kN/m)<br>
+    Moment: a = position, v1 = moment (kN.m, clockwise is +)<br>
+    Axial force: a = position, v1 = force (kN, to the right is +)
+  </small><br>
+  <button onclick="addLoad()">Add load</button>
+  <button onclick="clearLoads()">Clear all</button>
+
+  <h3>3. Your loads</h3>
+  <div id="list"></div>
+  <button onclick="calculate()">Calculate</button>
+</div>
+
+<div class="box">
+  <pre id="result"></pre>
+  <canvas id="canvas0" width="900" height="220"></canvas>
+  <canvas id="canvas1" width="900" height="200"></canvas>
+  <canvas id="canvas2" width="900" height="200"></canvas>
+  <canvas id="canvas3" width="900" height="200"></canvas>
+</div>
+
+<script>
+// ---------- data ----------
+// Every load is saved like this: {type: "point", a: 2, b: 0, v1: 20, v2: 0}
+var loads = [
+  { type: "point", a: 2, b: 0, v1: 20, v2: 0 },
+  { type: "udl", a: 3, b: 7, v1: 10, v2: 0 },
+  { type: "moment", a: 5, b: 0, v1: 25, v2: 0 },
+  { type: "axial", a: 4, b: 0, v1: 30, v2: 0 }
+];
+
+// lists that calculate() fills in
+var forces = [];   // vertical forces: {x, F}  (down is +)
+var moments = [];  // moments: {x, M}          (clockwise is +)
+var axials = [];   // axial forces: {x, F}     (right is +)
+
+// ---------- adding and removing loads ----------
+function addLoad() {
+  var load = {
+    type: document.getElementById("type").value,
+    a: Number(document.getElementById("a").value),
+    b: Number(document.getElementById("b").value),
+    v1: Number(document.getElementById("v1").value),
+    v2: Number(document.getElementById("v2").value)
+  };
+  if ((load.type == "udl" || load.type == "uvl") && load.b <= load.a) {
+    alert("For UDL and UVL, b must be bigger than a");
+    return;
+  }
+  loads.push(load);
+  showList();
+  calculate();
 }
-function arr(g,x1,y1,x2,y2,c){g.strokeStyle=g.fillStyle=c;g.lineWidth=2;g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();
- const a=Math.atan2(y2-y1,x2-x1);g.beginPath();g.moveTo(x2,y2);g.lineTo(x2-9*Math.cos(a-.4),y2-9*Math.sin(a-.4));g.lineTo(x2-9*Math.cos(a+.4),y2-9*Math.sin(a+.4));g.fill()}
-function plot(id,r,ys,col,title,inv){
- const c=$(id),g=c.getContext('2d'),W=c.width,H=c.height,m=45,p=28,xs=r.xs;
- g.clearRect(0,0,W,H);
- let lo=Math.min(0,...ys),hi=Math.max(0,...ys);if(hi-lo<1e-9){hi=1;lo=-1}
- const X=x=>m+x/r.L*(W-2*m),Y=y=>inv?p+(y-lo)/(hi-lo)*(H-2*p):H-p-(y-lo)/(hi-lo)*(H-2*p);
- g.fillStyle=col+'44';g.strokeStyle=col;g.lineWidth=2;g.beginPath();g.moveTo(X(xs[0]),Y(0));
- xs.forEach((x,i)=>g.lineTo(X(x),Y(ys[i])));g.lineTo(X(xs[xs.length-1]),Y(0));g.closePath();g.fill();
- g.beginPath();xs.forEach((x,i)=>i?g.lineTo(X(x),Y(ys[i])):g.moveTo(X(x),Y(ys[i])));g.stroke();
- g.strokeStyle='#000';g.lineWidth=1;g.beginPath();g.moveTo(m,Y(0));g.lineTo(W-m,Y(0));g.stroke();
- g.fillStyle='#000';g.font='bold 13px sans-serif';g.textAlign='left';g.fillText(title,8,15);
- g.font='12px sans-serif';g.textAlign='center';
- [ys.indexOf(Math.max(...ys)),ys.indexOf(Math.min(...ys))].forEach(i=>{if(Math.abs(ys[i])>1e-6)
-  g.fillText(f(ys[i]),X(xs[i]),Y(ys[i])+((ys[i]>0)!=inv?-6:15))});
+
+function removeLoad(index) {
+  loads.splice(index, 1);
+  showList();
+  calculate();
 }
-function loadsFig(r){
- const c=$('c0'),g=c.getContext('2d'),W=c.width,L=r.L,X=x=>45+x/L*(W-90),by=110;
- g.clearRect(0,0,W,c.height);g.font='12px sans-serif';g.textAlign='center';
- const wm=Math.max(1,...r.ds.map(d=>Math.max(Math.abs(d[2]),Math.abs(d[3]))));
- g.fillStyle='#000';g.font='bold 13px sans-serif';g.textAlign='left';g.fillText('Loading diagram',8,15);g.font='12px sans-serif';g.textAlign='center';
- g.lineWidth=6;g.strokeStyle='#222';g.beginPath();g.moveTo(X(0),by);g.lineTo(X(L),by);g.stroke();
- r.RV.forEach(a=>{if(r.S=='s'){g.fillStyle='#888';g.beginPath();g.moveTo(X(a[0]),by+4);g.lineTo(X(a[0])-10,by+22);g.lineTo(X(a[0])+10,by+22);g.fill()}
-  else{g.fillStyle='#555';g.fillRect(X(a[0])-4,by-28,8,56)}});
- r.pts.forEach(([x,P])=>{const s=P>=0?1:-1;arr(g,X(x),by-s*65,X(x),by-s*4,'#d22');g.fillStyle='#d22';g.fillText(P+' kN',X(x),by-s*70+(s<0?12:0))});
- r.ds.forEach(d=>{const n=14;let tp=[];for(let i=0;i<=n;i++){const x=d[0]+(d[1]-d[0])*i/n,h=50*(d[2]+(d[3]-d[2])*i/n)/wm;tp.push([X(x),by-h]);
-  if(Math.abs(h)>4)arr(g,X(x),by-h,X(x),by-(h>0?4:-4),'#25b')}
-  g.strokeStyle='#25b';g.lineWidth=2;g.beginPath();tp.forEach((q,i)=>i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]));g.stroke();
-  g.fillStyle='#25b';g.fillText(d[2]==d[3]?d[2]+' kN/m':d[2]+'→'+d[3]+' kN/m',X((d[0]+d[1])/2),by-62)});
- r.ms.forEach(([x,M])=>{g.fillStyle='#808';g.fillText((M>0?'\u21BB ':'\u21BA ')+Math.abs(M)+' kN.m',X(x),by+40)});
- r.ap.forEach(([x,N])=>{arr(g,X(x),by+62,X(x)+(N>=0?45:-45),by+62,'#1a7');g.fillStyle='#1a7';g.fillText(N+' kN',X(x),by+80)});
- r.ad.forEach(d=>{arr(g,d[2]>=0?X(d[0]):X(d[1]),by+100,d[2]>=0?X(d[1]):X(d[0]),by+100,'#1a7');g.fillStyle='#1a7';g.fillText(d[2]+' kN/m',X((d[0]+d[1])/2),by+116)});
+
+function clearLoads() {
+  loads = [];
+  showList();
+  calculate();
 }
-function calc(){
- const r=solve();if(!r){$('rep').textContent='Invalid support positions';return}
- const mx=(a,fn)=>{const v=fn(...a);return [v,r.xs[a.indexOf(v)]]};
- let t='REACTIONS\n';
- r.RV.forEach(a=>t+=`  Vertical   @ x=${f(a[0])} m : ${f(a[1])} kN (up +)\n`);
- r.RH.forEach(a=>t+=`  Horizontal @ x=${f(a[0])} m : ${f(a[1])} kN (right +)\n`);
- r.RM.forEach(a=>t+=`  Moment     @ x=${f(a[0])} m : ${f(a[1])} kN.m (clockwise +)\n`);
- const A=mx(r.V.map(Math.abs),Math.max),B=mx(r.M,Math.max),C=mx(r.M,Math.min),D=mx(r.N.map(Math.abs),Math.max);
- t+=`\nMax |shear|    : ${f(A[0])} kN @ x=${f(A[1])} m\nMax +moment    : ${f(B[0])} kN.m @ x=${f(B[1])} m\nMax -moment    : ${f(C[0])} kN.m @ x=${f(C[1])} m\nMax |axial|    : ${f(D[0])} kN @ x=${f(D[1])} m\nEnd check V,M  : ${f(r.V.at(-1))}, ${f(r.M.at(-1))} (should be 0)`;
- $('rep').textContent=t;
- loadsFig(r);plot('c1',r,r.N,'#1a7','Axial force diagram N (kN) - tension +');
- plot('c2',r,r.V,'#25b','Shear force diagram V (kN)');
- plot('c3',r,r.M,'#d22','Bending moment diagram M (kN.m) - sagging plotted downward',true);
+
+function showList() {
+  var text = "";
+  for (var i = 0; i < loads.length; i++) {
+    var l = loads[i];
+    text = text + (i + 1) + ". " + l.type + "  a=" + l.a + " b=" + l.b +
+           " v1=" + l.v1 + " v2=" + l.v2 +
+           " <button onclick='removeLoad(" + i + ")'>remove</button><br>";
+  }
+  document.getElementById("list").innerHTML = text;
 }
-function sup(){$('sbox').style.display=$('sup').value=='s'?'flex':'none'}
-$('sup').addEventListener('change',sup);
-fields();list();sup();calc();
-</script></body></html>
+
+// ---------- moment of all loads about a point (clockwise is +) ----------
+function momentAbout(x0) {
+  var total = 0;
+  for (var i = 0; i < forces.length; i++) {
+    total = total + forces[i].F * (forces[i].x - x0);
+  }
+  for (var j = 0; j < moments.length; j++) {
+    total = total + moments[j].M;
+  }
+  return total;
+}
+
+// ---------- shear, moment, axial force at position x (cut from the left) ----------
+function getInternal(x) {
+  var V = 0, M = 0, N = 0;
+  for (var i = 0; i < forces.length; i++) {
+    if (forces[i].x <= x) {
+      V = V - forces[i].F;
+      M = M - forces[i].F * (x - forces[i].x);
+    }
+  }
+  for (var j = 0; j < moments.length; j++) {
+    if (moments[j].x <= x) {
+      M = M + moments[j].M;
+    }
+  }
+  for (var k = 0; k < axials.length; k++) {
+    if (axials[k].x <= x) {
+      N = N - axials[k].F;
+    }
+  }
+  return { N: N, V: V, M: M };
+}
+
+// ---------- main calculation ----------
+function calculate() {
+  var L = Number(document.getElementById("length").value);
+  var support = document.getElementById("support").value;
+  var pin = Number(document.getElementById("pin").value);
+  var roller = Number(document.getElementById("roller").value);
+
+  forces = [];
+  moments = [];
+  axials = [];
+
+  // step 1: turn every load into simple lists
+  for (var i = 0; i < loads.length; i++) {
+    var ld = loads[i];
+
+    if (ld.type == "point") {
+      forces.push({ x: ld.a, F: ld.v1 });
+    }
+
+    if (ld.type == "udl" || ld.type == "uvl") {
+      // cut the distributed load into 400 small point loads
+      var w1 = ld.v1;
+      var w2 = ld.v1;
+      if (ld.type == "uvl") { w2 = ld.v2; }
+      var slices = 400;
+      var dx = (ld.b - ld.a) / slices;
+      for (var j = 0; j < slices; j++) {
+        var xm = ld.a + (j + 0.5) * dx;
+        var w = w1 + (w2 - w1) * (xm - ld.a) / (ld.b - ld.a);
+        forces.push({ x: xm, F: w * dx });
+      }
+    }
+
+    if (ld.type == "moment") {
+      moments.push({ x: ld.a, M: ld.v1 });
+    }
+
+    if (ld.type == "axial") {
+      axials.push({ x: ld.a, F: ld.v1 });
+    }
+  }
+
+  // step 2: totals
+  var totalForce = 0;
+  for (var f = 0; f < forces.length; f++) { totalForce = totalForce + forces[f].F; }
+  var totalAxial = 0;
+  for (var q = 0; q < axials.length; q++) { totalAxial = totalAxial + axials[q].F; }
+
+  // step 3: support reactions
+  var text = "SUPPORT REACTIONS\n";
+  if (support == "simple") {
+    if (roller == pin) { alert("Pin and roller cannot be at the same place"); return; }
+    var rollerReaction = momentAbout(pin) / (roller - pin);
+    var pinReaction = totalForce - rollerReaction;
+    forces.push({ x: pin, F: -pinReaction });
+    forces.push({ x: roller, F: -rollerReaction });
+    axials.push({ x: pin, F: -totalAxial });
+    text = text + "Vertical at pin    (x=" + pin + "): " + pinReaction.toFixed(2) + " kN (up)\n";
+    text = text + "Vertical at roller (x=" + roller + "): " + rollerReaction.toFixed(2) + " kN (up)\n";
+    text = text + "Horizontal at pin: " + (-totalAxial).toFixed(2) + " kN (right)\n";
+  } else {
+    var wall = 0;
+    if (support == "right") { wall = L; }
+    var wallMoment = -momentAbout(wall);
+    forces.push({ x: wall, F: -totalForce });
+    moments.push({ x: wall, M: wallMoment });
+    axials.push({ x: wall, F: -totalAxial });
+    text = text + "Vertical at wall (x=" + wall + "): " + totalForce.toFixed(2) + " kN (up)\n";
+    text = text + "Moment at wall: " + wallMoment.toFixed(2) + " kN.m (clockwise)\n";
+    text = text + "Horizontal at wall: " + (-totalAxial).toFixed(2) + " kN (right)\n";
+  }
+
+  // step 4: calculate N, V, M at 1000 points along the beam
+  var steps = 1000;
+  var xs = [], Ns = [], Vs = [], Ms = [];
+  for (var s = 0; s <= steps; s++) {
+    var x = L * s / steps;
+    if (s == steps) { x = L; }
+    var r = getInternal(x);
+    xs.push(x);
+    Ns.push(Math.round(r.N * 1000000) / 1000000);
+    Vs.push(Math.round(r.V * 1000000) / 1000000);
+    Ms.push(Math.round(r.M * 1000000) / 1000000);
+  }
+
+  // step 5: show results
+  text = text + "\nAxial N : max " + Math.max.apply(null, Ns).toFixed(2) + ",  min " + Math.min.apply(null, Ns).toFixed(2) + " kN";
+  text = text + "\nShear V : max " + Math.max.apply(null, Vs).toFixed(2) + ",  min " + Math.min.apply(null, Vs).toFixed(2) + " kN";
+  text = text + "\nMoment M: max " + Math.max.apply(null, Ms).toFixed(2) + ",  min " + Math.min.apply(null, Ms).toFixed(2) + " kN.m";
+  text = text + "\nCheck: V and M at the end of beam = " + Vs[steps].toFixed(2) + ", " + Ms[steps].toFixed(2) + " (should be 0)";
+  document.getElementById("result").innerText = text;
+
+  drawLoads(L, support, pin, roller);
+  drawGraph("canvas1", xs, Ns, "green", "Axial force diagram N (kN)", false);
+  drawGraph("canvas2", xs, Vs, "blue", "Shear force diagram V (kN)", false);
+  drawGraph("canvas3", xs, Ms, "red", "Bending moment diagram M (kN.m)  (positive is drawn downward)", true);
+}
+
+// ---------- drawing ----------
+function drawArrow(g, x1, y1, x2, y2, color) {
+  g.strokeStyle = color;
+  g.fillStyle = color;
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(x1, y1);
+  g.lineTo(x2, y2);
+  g.stroke();
+  var angle = Math.atan2(y2 - y1, x2 - x1);
+  g.beginPath();
+  g.moveTo(x2, y2);
+  g.lineTo(x2 - 10 * Math.cos(angle - 0.4), y2 - 10 * Math.sin(angle - 0.4));
+  g.lineTo(x2 - 10 * Math.cos(angle + 0.4), y2 - 10 * Math.sin(angle + 0.4));
+  g.fill();
+}
+
+function drawLoads(L, support, pin, roller) {
+  var canvas = document.getElementById("canvas0");
+  var g = canvas.getContext("2d");
+  var beamY = 110;
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  g.font = "13px Arial";
+  g.textAlign = "center";
+  g.fillStyle = "black";
+  g.fillText("Loading diagram", 60, 15);
+
+  function getX(x) { return 50 + x / L * (canvas.width - 100); }
+
+  // the beam
+  g.strokeStyle = "black";
+  g.lineWidth = 6;
+  g.beginPath();
+  g.moveTo(getX(0), beamY);
+  g.lineTo(getX(L), beamY);
+  g.stroke();
+
+  // supports
+  g.fillStyle = "gray";
+  if (support == "simple") {
+    var spots = [pin, roller];
+    for (var s = 0; s < 2; s++) {
+      var px = getX(spots[s]);
+      g.beginPath();
+      g.moveTo(px, beamY + 5);
+      g.lineTo(px - 10, beamY + 25);
+      g.lineTo(px + 10, beamY + 25);
+      g.fill();
+    }
+  } else {
+    var wallX = getX(0);
+    if (support == "right") { wallX = getX(L); }
+    g.fillRect(wallX - 4, beamY - 30, 8, 60);
+  }
+
+  // biggest distributed load (used to scale the drawing)
+  var biggest = 1;
+  for (var i = 0; i < loads.length; i++) {
+    if (loads[i].type == "udl" || loads[i].type == "uvl") {
+      biggest = Math.max(biggest, Math.abs(loads[i].v1), Math.abs(loads[i].v2));
+    }
+  }
+
+  // the loads
+  for (var j = 0; j < loads.length; j++) {
+    var l = loads[j];
+    g.fillStyle = "black";
+
+    if (l.type == "point") {
+      var dir = 1;
+      if (l.v1 < 0) { dir = -1; }
+      drawArrow(g, getX(l.a), beamY - dir * 70, getX(l.a), beamY - dir * 6, "red");
+      g.fillStyle = "red";
+      g.fillText(l.v1 + " kN", getX(l.a), beamY - dir * 76 + (dir < 0 ? 14 : 0));
+    }
+
+    if (l.type == "udl" || l.type == "uvl") {
+      var w2 = l.v1;
+      if (l.type == "uvl") { w2 = l.v2; }
+      var h1 = 50 * l.v1 / biggest;
+      var h2 = 50 * w2 / biggest;
+      g.strokeStyle = "blue";
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(getX(l.a), beamY - h1);
+      g.lineTo(getX(l.b), beamY - h2);
+      g.stroke();
+      for (var k = 0; k <= 10; k++) {
+        var xx = l.a + (l.b - l.a) * k / 10;
+        var hh = h1 + (h2 - h1) * k / 10;
+        if (Math.abs(hh) > 5) { drawArrow(g, getX(xx), beamY - hh, getX(xx), beamY - 5, "blue"); }
+      }
+      g.fillStyle = "blue";
+      g.fillText(l.v1 + (l.type == "uvl" ? " to " + l.v2 : "") + " kN/m", getX((l.a + l.b) / 2), beamY - 65);
+    }
+
+    if (l.type == "moment") {
+      g.fillStyle = "purple";
+      var sign = (l.v1 > 0) ? "clockwise " : "anticlockwise ";
+      g.fillText(sign + Math.abs(l.v1) + " kN.m", getX(l.a), beamY + 45);
+    }
+
+    if (l.type == "axial") {
+      var side = 1;
+      if (l.v1 < 0) { side = -1; }
+      drawArrow(g, getX(l.a), beamY + 70, getX(l.a) + side * 50, beamY + 70, "green");
+      g.fillStyle = "green";
+      g.fillText(l.v1 + " kN", getX(l.a), beamY + 90);
+    }
+  }
+}
+
+function drawGraph(id, xs, ys, color, title, flip) {
+  var canvas = document.getElementById(id);
+  var g = canvas.getContext("2d");
+  var left = 50, right = 20, top = 30, bottom = 25;
+  var plotW = canvas.width - left - right;
+  var plotH = canvas.height - top - bottom;
+  var L = xs[xs.length - 1];
+  g.clearRect(0, 0, canvas.width, canvas.height);
+
+  // find smallest and biggest value (zero is always included)
+  var minY = 0, maxY = 0;
+  for (var i = 0; i < ys.length; i++) {
+    if (ys[i] < minY) { minY = ys[i]; }
+    if (ys[i] > maxY) { maxY = ys[i]; }
+  }
+  if (maxY == minY) { maxY = 1; minY = -1; }
+
+  function getX(x) { return left + x / L * plotW; }
+  function getY(y) {
+    var t = (y - minY) / (maxY - minY);
+    if (flip) { return top + t * plotH; }
+    return top + (1 - t) * plotH;
+  }
+
+  // coloured area
+  g.fillStyle = color;
+  g.globalAlpha = 0.25;
+  g.beginPath();
+  g.moveTo(getX(0), getY(0));
+  for (var a = 0; a < xs.length; a++) { g.lineTo(getX(xs[a]), getY(ys[a])); }
+  g.lineTo(getX(L), getY(0));
+  g.fill();
+  g.globalAlpha = 1;
+
+  // line
+  g.strokeStyle = color;
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(getX(xs[0]), getY(ys[0]));
+  for (var b = 1; b < xs.length; b++) { g.lineTo(getX(xs[b]), getY(ys[b])); }
+  g.stroke();
+
+  // zero line
+  g.strokeStyle = "black";
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(left, getY(0));
+  g.lineTo(left + plotW, getY(0));
+  g.stroke();
+
+  // texts
+  g.fillStyle = "black";
+  g.font = "13px Arial";
+  g.textAlign = "left";
+  g.fillText(title, 5, 16);
+  g.textAlign = "center";
+  g.fillText("0", left, canvas.height - 8);
+  g.fillText(L + " m", left + plotW, canvas.height - 8);
+
+  // write the biggest and smallest value on the graph
+  var iMax = ys.indexOf(Math.max.apply(null, ys));
+  var iMin = ys.indexOf(Math.min.apply(null, ys));
+  if (Math.abs(ys[iMax]) > 0.001) { g.fillText(ys[iMax].toFixed(2), getX(xs[iMax]), getY(ys[iMax]) + (flip ? 16 : -6)); }
+  if (Math.abs(ys[iMin]) > 0.001) { g.fillText(ys[iMin].toFixed(2), getX(xs[iMin]), getY(ys[iMin]) + (flip ? -6 : 16)); }
+}
+
+// ---------- start ----------
+showList();
+calculate();
+</script>
+
+</body>
+</html>
