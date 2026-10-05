@@ -12,11 +12,72 @@
   button { padding: 6px 12px; margin: 3px; }
   canvas { width: 100%; border: 1px solid #ccc; margin-bottom: 6px; }
   pre { background: #f0f0f0; padding: 8px; }
+
+  /* login box */
+  #loginBox { max-width: 300px; margin: 80px auto; }
+  #loginBox input { width: 95%; margin: 6px 0; }
+  #loginBox button { width: 100%; }
+  #loginError { color: red; min-height: 20px; }
 </style>
+
+<!-- ===== LOGIN CHECK (runs first) ===== -->
+<script>
+  // Add users here. Format:  "id": "sha256 hash of the password"
+  // Demo logins:  admin / beam123    and    user1 / user123
+  var users = {
+    "admin": "af60ca815806d77ad81cb0bdeb07d0b5a98af9725ab90fae22b46a7ebddc05f5",
+    "user1": "e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446"
+  };
+
+  async function sha256(text) {
+    var buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(function (b) {
+      return b.toString(16).padStart(2, "0");
+    }).join("");
+  }
+
+  async function doLogin() {
+    var id = document.getElementById("userId").value.trim();
+    var pass = document.getElementById("password").value;
+    var hash = await sha256(pass);
+    if (users[id] && users[id] === hash) {
+      sessionStorage.setItem("loggedInUser", id);
+      showApp();
+    } else {
+      document.getElementById("loginError").innerText = "Wrong ID or password";
+    }
+  }
+
+  function showApp() {
+    document.getElementById("loginBox").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    document.getElementById("whoami").innerText = "Logged in as: " + sessionStorage.getItem("loggedInUser");
+    calculate(); // redraw now that the page is visible
+  }
+
+  function logout() {
+    sessionStorage.removeItem("loggedInUser");
+    location.reload();
+  }
+</script>
 </head>
 <body>
 
+<!-- ===== LOGIN FORM ===== -->
+<div id="loginBox" class="box">
+  <h3>Login</h3>
+  <input id="userId" placeholder="ID" autocomplete="username">
+  <input id="password" type="password" placeholder="Password" autocomplete="current-password"
+         onkeydown="if(event.key==='Enter'){doLogin();}">
+  <button onclick="doLogin()">Login</button>
+  <div id="loginError"></div>
+</div>
+
+<!-- ===== YOUR CALCULATOR (hidden until login) ===== -->
+<div id="app" style="display:none">
+
 <h2>Beam Calculator</h2>
+<div><small id="whoami"></small> <button onclick="logout()">Logout</button></div>
 
 <div class="box">
   <h3>1. Beam</h3>
@@ -67,6 +128,8 @@
   <canvas id="canvas2" width="900" height="200"></canvas>
   <canvas id="canvas3" width="900" height="200"></canvas>
 </div>
+
+</div><!-- end of #app -->
 
 <script>
 // ---------- data ----------
@@ -437,6 +500,9 @@ function drawGraph(id, xs, ys, color, title, flip) {
 // ---------- start ----------
 showList();
 calculate();
+
+// if already logged in during this browser session, skip the login screen
+if (sessionStorage.getItem("loggedInUser")) { showApp(); }
 </script>
 
 </body>
