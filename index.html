@@ -25,7 +25,7 @@
   // Add users here. Format:  "id": "sha256 hash of the password"
   // Demo logins:  admin / beam123    and    user1 / user123
   var users = {
-    "admin": "7d15d996a880f48b8ee84f4b76ac6e7587c085407fb57f9ff1f78b9b4ed54a7a",
+    "admin": "af60ca815806d77ad81cb0bdeb07d0b5a98af9725ab90fae22b46a7ebddc05f5",
     "user1": "e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446"
   };
 
@@ -313,10 +313,20 @@ function calculate() {
   text = text + "\nCheck: V and M at the end of beam = " + Vs[steps].toFixed(2) + ", " + Ms[steps].toFixed(2) + " (should be 0)";
   document.getElementById("result").innerText = text;
 
+  // key points = every place where something changes
+  var keyXs = [0, L];
+  for (var m = 0; m < loads.length; m++) {
+    keyXs.push(loads[m].a);
+    if (loads[m].type == "udl" || loads[m].type == "uvl") { keyXs.push(loads[m].b); }
+  }
+  if (support == "simple") { keyXs.push(pin); keyXs.push(roller); }
+  else if (support == "right") { keyXs.push(L); }
+  else { keyXs.push(0); }
+
   drawLoads(L, support, pin, roller);
-  drawGraph("canvas1", xs, Ns, "green", "Axial force diagram N (kN)", false);
-  drawGraph("canvas2", xs, Vs, "blue", "Shear force diagram V (kN)", false);
-  drawGraph("canvas3", xs, Ms, "red", "Bending moment diagram M (kN.m)  (positive is drawn downward)", true);
+  drawGraph("canvas1", xs, Ns, "green", "Axial force diagram N (kN)", false, keyXs, function (x) { return getInternal(x).N; });
+  drawGraph("canvas2", xs, Vs, "blue", "Shear force diagram V (kN)", false, keyXs, function (x) { return getInternal(x).V; });
+  drawGraph("canvas3", xs, Ms, "red", "Bending moment diagram M (kN.m)  (positive is drawn downward)", true, keyXs, function (x) { return getInternal(x).M; });
 }
 
 // ---------- drawing ----------
@@ -431,10 +441,10 @@ function drawLoads(L, support, pin, roller) {
   }
 }
 
-function drawGraph(id, xs, ys, color, title, flip) {
+function drawGraph(id, xs, ys, color, title, flip, keyXs, getVal) {
   var canvas = document.getElementById(id);
   var g = canvas.getContext("2d");
-  var left = 50, right = 20, top = 30, bottom = 25;
+  var left = 50, right = 45, top = 30, bottom = 25;
   var plotW = canvas.width - left - right;
   var plotH = canvas.height - top - bottom;
   var L = xs[xs.length - 1];
@@ -455,6 +465,16 @@ function drawGraph(id, xs, ys, color, title, flip) {
     return top + (1 - t) * plotH;
   }
 
+  // key points: loads, supports, ends + highest and lowest point of the curve
+  var iMax = ys.indexOf(Math.max.apply(null, ys));
+  var iMin = ys.indexOf(Math.min.apply(null, ys));
+  var all = keyXs.concat([xs[iMax], xs[iMin]]).filter(function (v) { return v >= 0 && v <= L; });
+  all.sort(function (p, q) { return p - q; });
+  var pts = [];
+  for (var n = 0; n < all.length; n++) {
+    if (pts.length == 0 || all[n] - pts[pts.length - 1] > 0.001) { pts.push(all[n]); }
+  }
+
   // coloured area
   g.fillStyle = color;
   g.globalAlpha = 0.25;
@@ -464,6 +484,18 @@ function drawGraph(id, xs, ys, color, title, flip) {
   g.lineTo(getX(L), getY(0));
   g.fill();
   g.globalAlpha = 1;
+
+  // light vertical lines at the key points
+  g.strokeStyle = "#bbb";
+  g.lineWidth = 1;
+  g.setLineDash([4, 4]);
+  for (var v = 0; v < pts.length; v++) {
+    g.beginPath();
+    g.moveTo(getX(pts[v]), top);
+    g.lineTo(getX(pts[v]), top + plotH);
+    g.stroke();
+  }
+  g.setLineDash([]);
 
   // line
   g.strokeStyle = color;
@@ -481,20 +513,52 @@ function drawGraph(id, xs, ys, color, title, flip) {
   g.lineTo(left + plotW, getY(0));
   g.stroke();
 
-  // texts
+  // title
   g.fillStyle = "black";
   g.font = "13px Arial";
   g.textAlign = "left";
   g.fillText(title, 5, 16);
-  g.textAlign = "center";
-  g.fillText("0", left, canvas.height - 8);
-  g.fillText(L + " m", left + plotW, canvas.height - 8);
 
-  // write the biggest and smallest value on the graph
-  var iMax = ys.indexOf(Math.max.apply(null, ys));
-  var iMin = ys.indexOf(Math.min.apply(null, ys));
-  if (Math.abs(ys[iMax]) > 0.001) { g.fillText(ys[iMax].toFixed(2), getX(xs[iMax]), getY(ys[iMax]) + (flip ? 16 : -6)); }
-  if (Math.abs(ys[iMin]) > 0.001) { g.fillText(ys[iMin].toFixed(2), getX(xs[iMin]), getY(ys[iMin]) + (flip ? -6 : 16)); }
+  // dots and values at every key point
+  g.font = "12px Arial";
+  var lastLabelX = -100;
+  for (var k = 0; k < pts.length; k++) {
+    var x = pts[k];
+    var rightVal = getVal(x);                       // value just after x
+    var leftVal = (x <= 0) ? 0 : getVal(x - 1e-7);  // value just before x
+    var jump = Math.abs(rightVal - leftVal) > 0.001;
+    var vals = jump ? [leftVal, rightVal] : [rightVal];
+
+    for (var t = 0; t < vals.length; t++) {
+      var val = Math.round(vals[t] * 1000) / 1000;
+      var px = getX(x), py = getY(val);
+
+      g.fillStyle = color;
+      g.beginPath();
+      g.arc(px, py, 4, 0, Math.PI * 2);
+      g.fill();
+
+      // put the text above or below the dot, away from the zero line
+      var above = (val >= 0) != flip;
+      var ty = above ? py - 8 : py + 16;
+      if (jump) {
+        g.textAlign = (t == 0) ? "right" : "left";
+        g.fillText(val.toFixed(2), px + (t == 0 ? -6 : 6), ty);
+      } else {
+        g.textAlign = "center";
+        g.fillText(val.toFixed(2), px, ty);
+      }
+    }
+
+    // x position under the graph (skip if it would overlap the previous one)
+    g.fillStyle = "black";
+    g.textAlign = "center";
+    if (px - lastLabelX > 30) {
+      g.fillText(Math.round(x * 100) / 100 + "", getX(x), canvas.height - 8);
+      lastLabelX = getX(x);
+    }
+  }
+  g.fillText("m", left + plotW + 18, canvas.height - 8);
 }
 
 // ---------- start ----------
