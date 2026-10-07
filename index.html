@@ -12,561 +12,520 @@
   button { padding: 6px 12px; margin: 3px; }
   canvas { width: 100%; border: 1px solid #ccc; margin-bottom: 6px; }
   pre { background: #f0f0f0; padding: 8px; }
-
-  /* login box */
-  #loginBox { max-width: 300px; margin: 80px auto; }
-  #loginBox input { width: 95%; margin: 6px 0; }
-  #loginBox button { width: 100%; }
-  #loginError { color: red; min-height: 20px; }
 </style>
-
-<!-- ===== LOGIN CHECK (runs first) ===== -->
-<script>
-  // Add users here. Format:  "id": "sha256 hash of the password"
-  // Demo logins:  admin / beam123    and    user1 / user123
-  var users = {
-    "admin": "7d15d996a880f48b8ee84f4b76ac6e7587c085407fb57f9ff1f78b9b4ed54a7a",
-    "user1": "e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446"
-  };
-
-  async function sha256(text) {
-    var buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(buf)).map(function (b) {
-      return b.toString(16).padStart(2, "0");
-    }).join("");
-  }
-
-  async function doLogin() {
-    var id = document.getElementById("userId").value.trim();
-    var pass = document.getElementById("password").value;
-    var hash = await sha256(pass);
-    if (users[id] && users[id] === hash) {
-      sessionStorage.setItem("loggedInUser", id);
-      showApp();
-    } else {
-      document.getElementById("loginError").innerText = "Wrong ID or password";
-    }
-  }
-
-  function showApp() {
-    document.getElementById("loginBox").style.display = "none";
-    document.getElementById("app").style.display = "block";
-    document.getElementById("whoami").innerText = "Logged in as: " + sessionStorage.getItem("loggedInUser");
-    calculate(); // redraw now that the page is visible
-  }
-
-  function logout() {
-    sessionStorage.removeItem("loggedInUser");
-    location.reload();
-  }
-</script>
 </head>
 <body>
 
-<!-- ===== LOGIN FORM ===== -->
-<div id="loginBox" class="box">
-  <h3>Login</h3>
-  <input id="userId" placeholder="ID" autocomplete="username">
-  <input id="password" type="password" placeholder="Password" autocomplete="current-password"
-         onkeydown="if(event.key==='Enter'){doLogin();}">
-  <button onclick="doLogin()">Login</button>
-  <div id="loginError"></div>
-</div>
-
-<!-- ===== YOUR CALCULATOR (hidden until login) ===== -->
-<div id="app" style="display:none">
-
 <h2>Beam Calculator</h2>
-<div><small id="whoami"></small> <button onclick="logout()">Logout</button></div>
 
 <div class="box">
   <h3>1. Beam</h3>
-  Length (m): <input id="length" type="number" value="10"><br>
+  Length (m): <input id="beamLength" type="number" value="10"><br>
   Support:
-  <select id="support">
+  <select id="supportType">
     <option value="simple">Simply supported</option>
     <option value="left">Fixed at left end</option>
     <option value="right">Fixed at right end</option>
   </select><br>
-  Pin position (m): <input id="pin" type="number" value="0">
-  Roller position (m): <input id="roller" type="number" value="8">
+  Pin position (m): <input id="pinPosition" type="number" value="0">
+  Roller position (m): <input id="rollerPosition" type="number" value="8">
   <br><small>(pin and roller are used only for "Simply supported")</small>
 
   <h3>2. Add a load</h3>
   Type:
-  <select id="type">
+  <select id="loadType">
     <option value="point">Point load</option>
     <option value="udl">UDL (uniform load)</option>
-    <option value="uvl">UVL (triangle / varying load)</option>
     <option value="moment">Moment</option>
-    <option value="axial">Axial force</option>
   </select><br>
-  a: <input id="a" type="number" value="0">
-  b: <input id="b" type="number" value="0">
-  v1: <input id="v1" type="number" value="0">
-  v2: <input id="v2" type="number" value="0">
+  Position / Start: <input id="startPosition" type="number" value="0">
+  End: <input id="endPosition" type="number" value="0">
+  Value: <input id="loadValue" type="number" value="0">
   <br>
   <small>
-    Point load: a = position, v1 = load (kN, down is +)<br>
-    UDL: a = start, b = end, v1 = load (kN/m)<br>
-    UVL: a = start, b = end, v1 = load at start, v2 = load at end (kN/m)<br>
-    Moment: a = position, v1 = moment (kN.m, clockwise is +)<br>
-    Axial force: a = position, v1 = force (kN, to the right is +)
+    Point load: Position = where it acts, Value = load (kN, down is +)<br>
+    UDL: Start and End = where it begins and ends, Value = load (kN/m, down is +)<br>
+    Moment: Position = where it acts, Value = moment (kN.m, clockwise is +)
   </small><br>
   <button onclick="addLoad()">Add load</button>
   <button onclick="clearLoads()">Clear all</button>
 
   <h3>3. Your loads</h3>
-  <div id="list"></div>
+  <div id="loadListBox"></div>
   <button onclick="calculate()">Calculate</button>
 </div>
 
 <div class="box">
-  <pre id="result"></pre>
-  <canvas id="canvas0" width="900" height="220"></canvas>
-  <canvas id="canvas1" width="900" height="200"></canvas>
-  <canvas id="canvas2" width="900" height="200"></canvas>
-  <canvas id="canvas3" width="900" height="200"></canvas>
+  <pre id="resultText"></pre>
+  <canvas id="loadingCanvas" width="900" height="220"></canvas>
+  <canvas id="shearCanvas" width="900" height="200"></canvas>
+  <canvas id="momentCanvas" width="900" height="200"></canvas>
 </div>
-
-</div><!-- end of #app -->
 
 <script>
 // ---------- data ----------
-// Every load is saved like this: {type: "point", a: 2, b: 0, v1: 20, v2: 0}
+// Every load is saved like this: { type: "point", start: 2, end: 0, value: 20 }
 var loads = [
-  { type: "point", a: 2, b: 0, v1: 20, v2: 0 },
-  { type: "udl", a: 3, b: 7, v1: 10, v2: 0 },
-  { type: "moment", a: 5, b: 0, v1: 25, v2: 0 },
-  { type: "axial", a: 4, b: 0, v1: 30, v2: 0 }
+  { type: "point",  start: 2, end: 0, value: 20 },
+  { type: "udl",    start: 3, end: 7, value: 10 },
+  { type: "moment", start: 5, end: 0, value: 25 }
 ];
 
-// lists that calculate() fills in
-var forces = [];   // vertical forces: {x, F}  (down is +)
-var moments = [];  // moments: {x, M}          (clockwise is +)
-var axials = [];   // axial forces: {x, F}     (right is +)
+// These two lists are filled in by calculate()
+var forceList = [];   // vertical forces: { position, force }   (down is +)
+var momentList = [];  // moments:         { position, moment }  (clockwise is +)
 
 // ---------- adding and removing loads ----------
 function addLoad() {
-  var load = {
-    type: document.getElementById("type").value,
-    a: Number(document.getElementById("a").value),
-    b: Number(document.getElementById("b").value),
-    v1: Number(document.getElementById("v1").value),
-    v2: Number(document.getElementById("v2").value)
+  var newLoad = {
+    type: document.getElementById("loadType").value,
+    start: Number(document.getElementById("startPosition").value),
+    end: Number(document.getElementById("endPosition").value),
+    value: Number(document.getElementById("loadValue").value)
   };
-  if ((load.type == "udl" || load.type == "uvl") && load.b <= load.a) {
-    alert("For UDL and UVL, b must be bigger than a");
+
+  if (newLoad.type == "udl" && newLoad.end <= newLoad.start) {
+    alert("For a UDL, End must be bigger than Start");
     return;
   }
-  loads.push(load);
-  showList();
+
+  loads.push(newLoad);
+  showLoadList();
   calculate();
 }
 
 function removeLoad(index) {
   loads.splice(index, 1);
-  showList();
+  showLoadList();
   calculate();
 }
 
 function clearLoads() {
   loads = [];
-  showList();
+  showLoadList();
   calculate();
 }
 
-function showList() {
+function showLoadList() {
   var text = "";
   for (var i = 0; i < loads.length; i++) {
-    var l = loads[i];
-    text = text + (i + 1) + ". " + l.type + "  a=" + l.a + " b=" + l.b +
-           " v1=" + l.v1 + " v2=" + l.v2 +
+    var load = loads[i];
+    text = text + (i + 1) + ". " + load.type +
+           "  start=" + load.start +
+           " end=" + load.end +
+           " value=" + load.value +
            " <button onclick='removeLoad(" + i + ")'>remove</button><br>";
   }
-  document.getElementById("list").innerHTML = text;
+  document.getElementById("loadListBox").innerHTML = text;
 }
 
-// ---------- moment of all loads about a point (clockwise is +) ----------
-function momentAbout(x0) {
+// ---------- total moment of all loads about one point (clockwise is +) ----------
+function momentAbout(point) {
   var total = 0;
-  for (var i = 0; i < forces.length; i++) {
-    total = total + forces[i].F * (forces[i].x - x0);
+  for (var i = 0; i < forceList.length; i++) {
+    total = total + forceList[i].force * (forceList[i].position - point);
   }
-  for (var j = 0; j < moments.length; j++) {
-    total = total + moments[j].M;
+  for (var j = 0; j < momentList.length; j++) {
+    total = total + momentList[j].moment;
   }
   return total;
 }
 
-// ---------- shear, moment, axial force at position x (cut from the left) ----------
-function getInternal(x) {
-  var V = 0, M = 0, N = 0;
-  for (var i = 0; i < forces.length; i++) {
-    if (forces[i].x <= x) {
-      V = V - forces[i].F;
-      M = M - forces[i].F * (x - forces[i].x);
+// ---------- shear and bending moment at position x (cut from the left) ----------
+function getShearAndMoment(x) {
+  var shear = 0;
+  var bendingMoment = 0;
+
+  for (var i = 0; i < forceList.length; i++) {
+    if (forceList[i].position <= x) {
+      shear = shear - forceList[i].force;
+      bendingMoment = bendingMoment - forceList[i].force * (x - forceList[i].position);
     }
   }
-  for (var j = 0; j < moments.length; j++) {
-    if (moments[j].x <= x) {
-      M = M + moments[j].M;
+  for (var j = 0; j < momentList.length; j++) {
+    if (momentList[j].position <= x) {
+      bendingMoment = bendingMoment + momentList[j].moment;
     }
   }
-  for (var k = 0; k < axials.length; k++) {
-    if (axials[k].x <= x) {
-      N = N - axials[k].F;
-    }
-  }
-  return { N: N, V: V, M: M };
+
+  return { shear: shear, moment: bendingMoment };
 }
 
 // ---------- main calculation ----------
 function calculate() {
-  var L = Number(document.getElementById("length").value);
-  var support = document.getElementById("support").value;
-  var pin = Number(document.getElementById("pin").value);
-  var roller = Number(document.getElementById("roller").value);
+  var beamLength = Number(document.getElementById("beamLength").value);
+  var supportType = document.getElementById("supportType").value;
+  var pinPosition = Number(document.getElementById("pinPosition").value);
+  var rollerPosition = Number(document.getElementById("rollerPosition").value);
 
-  forces = [];
-  moments = [];
-  axials = [];
+  forceList = [];
+  momentList = [];
 
   // step 1: turn every load into simple lists
   for (var i = 0; i < loads.length; i++) {
-    var ld = loads[i];
+    var load = loads[i];
 
-    if (ld.type == "point") {
-      forces.push({ x: ld.a, F: ld.v1 });
+    if (load.type == "point") {
+      forceList.push({ position: load.start, force: load.value });
     }
 
-    if (ld.type == "udl" || ld.type == "uvl") {
-      // cut the distributed load into 400 small point loads
-      var w1 = ld.v1;
-      var w2 = ld.v1;
-      if (ld.type == "uvl") { w2 = ld.v2; }
-      var slices = 400;
-      var dx = (ld.b - ld.a) / slices;
-      for (var j = 0; j < slices; j++) {
-        var xm = ld.a + (j + 0.5) * dx;
-        var w = w1 + (w2 - w1) * (xm - ld.a) / (ld.b - ld.a);
-        forces.push({ x: xm, F: w * dx });
+    if (load.type == "udl") {
+      // cut the UDL into 400 small point loads
+      var numberOfSlices = 400;
+      var sliceWidth = (load.end - load.start) / numberOfSlices;
+      for (var s = 0; s < numberOfSlices; s++) {
+        var sliceMiddle = load.start + (s + 0.5) * sliceWidth;
+        forceList.push({ position: sliceMiddle, force: load.value * sliceWidth });
       }
     }
 
-    if (ld.type == "moment") {
-      moments.push({ x: ld.a, M: ld.v1 });
-    }
-
-    if (ld.type == "axial") {
-      axials.push({ x: ld.a, F: ld.v1 });
+    if (load.type == "moment") {
+      momentList.push({ position: load.start, moment: load.value });
     }
   }
 
-  // step 2: totals
+  // step 2: total downward force
   var totalForce = 0;
-  for (var f = 0; f < forces.length; f++) { totalForce = totalForce + forces[f].F; }
-  var totalAxial = 0;
-  for (var q = 0; q < axials.length; q++) { totalAxial = totalAxial + axials[q].F; }
+  for (var f = 0; f < forceList.length; f++) {
+    totalForce = totalForce + forceList[f].force;
+  }
 
   // step 3: support reactions
-  var text = "SUPPORT REACTIONS\n";
-  if (support == "simple") {
-    if (roller == pin) { alert("Pin and roller cannot be at the same place"); return; }
-    var rollerReaction = momentAbout(pin) / (roller - pin);
+  var resultText = "SUPPORT REACTIONS\n";
+
+  if (supportType == "simple") {
+    if (rollerPosition == pinPosition) {
+      alert("Pin and roller cannot be at the same place");
+      return;
+    }
+    var rollerReaction = momentAbout(pinPosition) / (rollerPosition - pinPosition);
     var pinReaction = totalForce - rollerReaction;
-    forces.push({ x: pin, F: -pinReaction });
-    forces.push({ x: roller, F: -rollerReaction });
-    axials.push({ x: pin, F: -totalAxial });
-    text = text + "Vertical at pin    (x=" + pin + "): " + pinReaction.toFixed(2) + " kN (up)\n";
-    text = text + "Vertical at roller (x=" + roller + "): " + rollerReaction.toFixed(2) + " kN (up)\n";
-    text = text + "Horizontal at pin: " + (-totalAxial).toFixed(2) + " kN (right)\n";
+
+    // reactions push up, so they are negative in our "down is +" lists
+    forceList.push({ position: pinPosition, force: -pinReaction });
+    forceList.push({ position: rollerPosition, force: -rollerReaction });
+
+    resultText = resultText + "Vertical at pin    (x=" + pinPosition + "): " + pinReaction.toFixed(2) + " kN (up)\n";
+    resultText = resultText + "Vertical at roller (x=" + rollerPosition + "): " + rollerReaction.toFixed(2) + " kN (up)\n";
   } else {
-    var wall = 0;
-    if (support == "right") { wall = L; }
-    var wallMoment = -momentAbout(wall);
-    forces.push({ x: wall, F: -totalForce });
-    moments.push({ x: wall, M: wallMoment });
-    axials.push({ x: wall, F: -totalAxial });
-    text = text + "Vertical at wall (x=" + wall + "): " + totalForce.toFixed(2) + " kN (up)\n";
-    text = text + "Moment at wall: " + wallMoment.toFixed(2) + " kN.m (clockwise)\n";
-    text = text + "Horizontal at wall: " + (-totalAxial).toFixed(2) + " kN (right)\n";
+    var wallPosition = 0;
+    if (supportType == "right") { wallPosition = beamLength; }
+
+    var wallMoment = -momentAbout(wallPosition);
+    forceList.push({ position: wallPosition, force: -totalForce });
+    momentList.push({ position: wallPosition, moment: wallMoment });
+
+    resultText = resultText + "Vertical at wall (x=" + wallPosition + "): " + totalForce.toFixed(2) + " kN (up)\n";
+    resultText = resultText + "Moment at wall: " + wallMoment.toFixed(2) + " kN.m (clockwise)\n";
   }
 
-  // step 4: calculate N, V, M at 1000 points along the beam
-  var steps = 1000;
-  var xs = [], Ns = [], Vs = [], Ms = [];
-  for (var s = 0; s <= steps; s++) {
-    var x = L * s / steps;
-    if (s == steps) { x = L; }
-    var r = getInternal(x);
-    xs.push(x);
-    Ns.push(Math.round(r.N * 1000000) / 1000000);
-    Vs.push(Math.round(r.V * 1000000) / 1000000);
-    Ms.push(Math.round(r.M * 1000000) / 1000000);
+  // step 4: calculate shear and moment at 1001 points along the beam
+  var numberOfSteps = 1000;
+  var xValues = [];
+  var shearValues = [];
+  var momentValues = [];
+
+  for (var p = 0; p <= numberOfSteps; p++) {
+    var x = beamLength * p / numberOfSteps;
+    if (p == numberOfSteps) { x = beamLength; }
+    var result = getShearAndMoment(x);
+    xValues.push(x);
+    shearValues.push(Math.round(result.shear * 1000000) / 1000000);
+    momentValues.push(Math.round(result.moment * 1000000) / 1000000);
   }
 
   // step 5: show results
-  text = text + "\nAxial N : max " + Math.max.apply(null, Ns).toFixed(2) + ",  min " + Math.min.apply(null, Ns).toFixed(2) + " kN";
-  text = text + "\nShear V : max " + Math.max.apply(null, Vs).toFixed(2) + ",  min " + Math.min.apply(null, Vs).toFixed(2) + " kN";
-  text = text + "\nMoment M: max " + Math.max.apply(null, Ms).toFixed(2) + ",  min " + Math.min.apply(null, Ms).toFixed(2) + " kN.m";
-  text = text + "\nCheck: V and M at the end of beam = " + Vs[steps].toFixed(2) + ", " + Ms[steps].toFixed(2) + " (should be 0)";
-  document.getElementById("result").innerText = text;
+  var lastIndex = numberOfSteps;
+  resultText = resultText + "\nShear V : max " + Math.max.apply(null, shearValues).toFixed(2) +
+               ",  min " + Math.min.apply(null, shearValues).toFixed(2) + " kN";
+  resultText = resultText + "\nMoment M: max " + Math.max.apply(null, momentValues).toFixed(2) +
+               ",  min " + Math.min.apply(null, momentValues).toFixed(2) + " kN.m";
+  resultText = resultText + "\nCheck: V and M at the end of beam = " + shearValues[lastIndex].toFixed(2) +
+               ", " + momentValues[lastIndex].toFixed(2) + " (should be 0)";
+  document.getElementById("resultText").innerText = resultText;
 
   // key points = every place where something changes
-  var keyXs = [0, L];
-  for (var m = 0; m < loads.length; m++) {
-    keyXs.push(loads[m].a);
-    if (loads[m].type == "udl" || loads[m].type == "uvl") { keyXs.push(loads[m].b); }
+  var keyPositions = [0, beamLength];
+  for (var k = 0; k < loads.length; k++) {
+    keyPositions.push(loads[k].start);
+    if (loads[k].type == "udl") { keyPositions.push(loads[k].end); }
   }
-  if (support == "simple") { keyXs.push(pin); keyXs.push(roller); }
-  else if (support == "right") { keyXs.push(L); }
-  else { keyXs.push(0); }
+  if (supportType == "simple") {
+    keyPositions.push(pinPosition);
+    keyPositions.push(rollerPosition);
+  }
 
-  drawLoads(L, support, pin, roller);
-  drawGraph("canvas1", xs, Ns, "green", "Axial force diagram N (kN)", false, keyXs, function (x) { return getInternal(x).N; });
-  drawGraph("canvas2", xs, Vs, "blue", "Shear force diagram V (kN)", false, keyXs, function (x) { return getInternal(x).V; });
-  drawGraph("canvas3", xs, Ms, "red", "Bending moment diagram M (kN.m)  (positive is drawn downward)", true, keyXs, function (x) { return getInternal(x).M; });
+  drawLoadingDiagram(beamLength, supportType, pinPosition, rollerPosition);
+  drawGraph("shearCanvas", xValues, shearValues, "blue", "Shear force diagram V (kN)", false, keyPositions,
+            function (x) { return getShearAndMoment(x).shear; });
+  drawGraph("momentCanvas", xValues, momentValues, "red", "Bending moment diagram M (kN.m)  (positive is drawn downward)", true, keyPositions,
+            function (x) { return getShearAndMoment(x).moment; });
 }
 
 // ---------- drawing ----------
-function drawArrow(g, x1, y1, x2, y2, color) {
-  g.strokeStyle = color;
-  g.fillStyle = color;
-  g.lineWidth = 2;
-  g.beginPath();
-  g.moveTo(x1, y1);
-  g.lineTo(x2, y2);
-  g.stroke();
-  var angle = Math.atan2(y2 - y1, x2 - x1);
-  g.beginPath();
-  g.moveTo(x2, y2);
-  g.lineTo(x2 - 10 * Math.cos(angle - 0.4), y2 - 10 * Math.sin(angle - 0.4));
-  g.lineTo(x2 - 10 * Math.cos(angle + 0.4), y2 - 10 * Math.sin(angle + 0.4));
-  g.fill();
+function drawArrow(pen, startX, startY, endX, endY, color) {
+  pen.strokeStyle = color;
+  pen.fillStyle = color;
+  pen.lineWidth = 2;
+
+  // the line
+  pen.beginPath();
+  pen.moveTo(startX, startY);
+  pen.lineTo(endX, endY);
+  pen.stroke();
+
+  // the arrow head
+  var angle = Math.atan2(endY - startY, endX - startX);
+  pen.beginPath();
+  pen.moveTo(endX, endY);
+  pen.lineTo(endX - 10 * Math.cos(angle - 0.4), endY - 10 * Math.sin(angle - 0.4));
+  pen.lineTo(endX - 10 * Math.cos(angle + 0.4), endY - 10 * Math.sin(angle + 0.4));
+  pen.fill();
 }
 
-function drawLoads(L, support, pin, roller) {
-  var canvas = document.getElementById("canvas0");
-  var g = canvas.getContext("2d");
+function drawLoadingDiagram(beamLength, supportType, pinPosition, rollerPosition) {
+  var canvas = document.getElementById("loadingCanvas");
+  var pen = canvas.getContext("2d");
   var beamY = 110;
-  g.clearRect(0, 0, canvas.width, canvas.height);
-  g.font = "13px Arial";
-  g.textAlign = "center";
-  g.fillStyle = "black";
-  g.fillText("Loading diagram", 60, 15);
 
-  function getX(x) { return 50 + x / L * (canvas.width - 100); }
+  pen.clearRect(0, 0, canvas.width, canvas.height);
+  pen.font = "13px Arial";
+  pen.textAlign = "center";
+  pen.fillStyle = "black";
+  pen.fillText("Loading diagram", 60, 15);
 
-  // the beam
-  g.strokeStyle = "black";
-  g.lineWidth = 6;
-  g.beginPath();
-  g.moveTo(getX(0), beamY);
-  g.lineTo(getX(L), beamY);
-  g.stroke();
-
-  // supports
-  g.fillStyle = "gray";
-  if (support == "simple") {
-    var spots = [pin, roller];
-    for (var s = 0; s < 2; s++) {
-      var px = getX(spots[s]);
-      g.beginPath();
-      g.moveTo(px, beamY + 5);
-      g.lineTo(px - 10, beamY + 25);
-      g.lineTo(px + 10, beamY + 25);
-      g.fill();
-    }
-  } else {
-    var wallX = getX(0);
-    if (support == "right") { wallX = getX(L); }
-    g.fillRect(wallX - 4, beamY - 30, 8, 60);
+  // converts a beam position (metres) into a canvas x position (pixels)
+  function toPixel(position) {
+    return 50 + position / beamLength * (canvas.width - 100);
   }
 
-  // biggest distributed load (used to scale the drawing)
-  var biggest = 1;
+  // the beam
+  pen.strokeStyle = "black";
+  pen.lineWidth = 6;
+  pen.beginPath();
+  pen.moveTo(toPixel(0), beamY);
+  pen.lineTo(toPixel(beamLength), beamY);
+  pen.stroke();
+
+  // supports
+  pen.fillStyle = "gray";
+  if (supportType == "simple") {
+    var supportPositions = [pinPosition, rollerPosition];
+    for (var s = 0; s < 2; s++) {
+      var supportX = toPixel(supportPositions[s]);
+      pen.beginPath();
+      pen.moveTo(supportX, beamY + 5);
+      pen.lineTo(supportX - 10, beamY + 25);
+      pen.lineTo(supportX + 10, beamY + 25);
+      pen.fill();
+    }
+  } else {
+    var wallX = toPixel(0);
+    if (supportType == "right") { wallX = toPixel(beamLength); }
+    pen.fillRect(wallX - 4, beamY - 30, 8, 60);
+  }
+
+  // biggest UDL value (used to scale the drawing)
+  var biggestUdl = 1;
   for (var i = 0; i < loads.length; i++) {
-    if (loads[i].type == "udl" || loads[i].type == "uvl") {
-      biggest = Math.max(biggest, Math.abs(loads[i].v1), Math.abs(loads[i].v2));
+    if (loads[i].type == "udl") {
+      biggestUdl = Math.max(biggestUdl, Math.abs(loads[i].value));
     }
   }
 
   // the loads
   for (var j = 0; j < loads.length; j++) {
-    var l = loads[j];
-    g.fillStyle = "black";
+    var load = loads[j];
+    pen.fillStyle = "black";
 
-    if (l.type == "point") {
-      var dir = 1;
-      if (l.v1 < 0) { dir = -1; }
-      drawArrow(g, getX(l.a), beamY - dir * 70, getX(l.a), beamY - dir * 6, "red");
-      g.fillStyle = "red";
-      g.fillText(l.v1 + " kN", getX(l.a), beamY - dir * 76 + (dir < 0 ? 14 : 0));
+    if (load.type == "point") {
+      var direction = 1;                       // 1 = pointing down
+      if (load.value < 0) { direction = -1; }  // -1 = pointing up
+      drawArrow(pen, toPixel(load.start), beamY - direction * 70,
+                     toPixel(load.start), beamY - direction * 6, "red");
+      pen.fillStyle = "red";
+      pen.fillText(load.value + " kN", toPixel(load.start), beamY - direction * 76 + (direction < 0 ? 14 : 0));
     }
 
-    if (l.type == "udl" || l.type == "uvl") {
-      var w2 = l.v1;
-      if (l.type == "uvl") { w2 = l.v2; }
-      var h1 = 50 * l.v1 / biggest;
-      var h2 = 50 * w2 / biggest;
-      g.strokeStyle = "blue";
-      g.lineWidth = 2;
-      g.beginPath();
-      g.moveTo(getX(l.a), beamY - h1);
-      g.lineTo(getX(l.b), beamY - h2);
-      g.stroke();
-      for (var k = 0; k <= 10; k++) {
-        var xx = l.a + (l.b - l.a) * k / 10;
-        var hh = h1 + (h2 - h1) * k / 10;
-        if (Math.abs(hh) > 5) { drawArrow(g, getX(xx), beamY - hh, getX(xx), beamY - 5, "blue"); }
+    if (load.type == "udl") {
+      var height = 50 * load.value / biggestUdl;
+      pen.strokeStyle = "blue";
+      pen.lineWidth = 2;
+      pen.beginPath();
+      pen.moveTo(toPixel(load.start), beamY - height);
+      pen.lineTo(toPixel(load.end), beamY - height);
+      pen.stroke();
+
+      // 11 small arrows along the UDL
+      if (Math.abs(height) > 5) {
+        for (var k = 0; k <= 10; k++) {
+          var arrowPosition = load.start + (load.end - load.start) * k / 10;
+          drawArrow(pen, toPixel(arrowPosition), beamY - height, toPixel(arrowPosition), beamY - 5, "blue");
+        }
       }
-      g.fillStyle = "blue";
-      g.fillText(l.v1 + (l.type == "uvl" ? " to " + l.v2 : "") + " kN/m", getX((l.a + l.b) / 2), beamY - 65);
+      pen.fillStyle = "blue";
+      pen.fillText(load.value + " kN/m", toPixel((load.start + load.end) / 2), beamY - 65);
     }
 
-    if (l.type == "moment") {
-      g.fillStyle = "purple";
-      var sign = (l.v1 > 0) ? "clockwise " : "anticlockwise ";
-      g.fillText(sign + Math.abs(l.v1) + " kN.m", getX(l.a), beamY + 45);
-    }
-
-    if (l.type == "axial") {
-      var side = 1;
-      if (l.v1 < 0) { side = -1; }
-      drawArrow(g, getX(l.a), beamY + 70, getX(l.a) + side * 50, beamY + 70, "green");
-      g.fillStyle = "green";
-      g.fillText(l.v1 + " kN", getX(l.a), beamY + 90);
+    if (load.type == "moment") {
+      pen.fillStyle = "purple";
+      var word = "anticlockwise ";
+      if (load.value > 0) { word = "clockwise "; }
+      pen.fillText(word + Math.abs(load.value) + " kN.m", toPixel(load.start), beamY + 45);
     }
   }
 }
 
-function drawGraph(id, xs, ys, color, title, flip, keyXs, getVal) {
-  var canvas = document.getElementById(id);
-  var g = canvas.getContext("2d");
-  var left = 50, right = 45, top = 30, bottom = 25;
-  var plotW = canvas.width - left - right;
-  var plotH = canvas.height - top - bottom;
-  var L = xs[xs.length - 1];
-  g.clearRect(0, 0, canvas.width, canvas.height);
+function drawGraph(canvasId, xValues, yValues, color, title, flipUpsideDown, keyPositions, getValueAt) {
+  var canvas = document.getElementById(canvasId);
+  var pen = canvas.getContext("2d");
+
+  var leftMargin = 50, rightMargin = 45, topMargin = 30, bottomMargin = 25;
+  var plotWidth = canvas.width - leftMargin - rightMargin;
+  var plotHeight = canvas.height - topMargin - bottomMargin;
+  var beamLength = xValues[xValues.length - 1];
+
+  pen.clearRect(0, 0, canvas.width, canvas.height);
 
   // find smallest and biggest value (zero is always included)
-  var minY = 0, maxY = 0;
-  for (var i = 0; i < ys.length; i++) {
-    if (ys[i] < minY) { minY = ys[i]; }
-    if (ys[i] > maxY) { maxY = ys[i]; }
+  var smallest = 0;
+  var biggest = 0;
+  for (var i = 0; i < yValues.length; i++) {
+    if (yValues[i] < smallest) { smallest = yValues[i]; }
+    if (yValues[i] > biggest) { biggest = yValues[i]; }
   }
-  if (maxY == minY) { maxY = 1; minY = -1; }
+  if (biggest == smallest) { biggest = 1; smallest = -1; }
 
-  function getX(x) { return left + x / L * plotW; }
-  function getY(y) {
-    var t = (y - minY) / (maxY - minY);
-    if (flip) { return top + t * plotH; }
-    return top + (1 - t) * plotH;
+  // convert beam position / graph value into canvas pixels
+  function toPixelX(x) {
+    return leftMargin + x / beamLength * plotWidth;
+  }
+  function toPixelY(y) {
+    var fraction = (y - smallest) / (biggest - smallest);
+    if (flipUpsideDown) { return topMargin + fraction * plotHeight; }
+    return topMargin + (1 - fraction) * plotHeight;
   }
 
   // key points: loads, supports, ends + highest and lowest point of the curve
-  var iMax = ys.indexOf(Math.max.apply(null, ys));
-  var iMin = ys.indexOf(Math.min.apply(null, ys));
-  var all = keyXs.concat([xs[iMax], xs[iMin]]).filter(function (v) { return v >= 0 && v <= L; });
-  all.sort(function (p, q) { return p - q; });
-  var pts = [];
-  for (var n = 0; n < all.length; n++) {
-    if (pts.length == 0 || all[n] - pts[pts.length - 1] > 0.001) { pts.push(all[n]); }
+  var indexOfBiggest = yValues.indexOf(Math.max.apply(null, yValues));
+  var indexOfSmallest = yValues.indexOf(Math.min.apply(null, yValues));
+  var allPositions = keyPositions.concat([xValues[indexOfBiggest], xValues[indexOfSmallest]])
+    .filter(function (position) { return position >= 0 && position <= beamLength; });
+  allPositions.sort(function (a, b) { return a - b; });
+
+  // remove positions that are almost the same
+  var points = [];
+  for (var n = 0; n < allPositions.length; n++) {
+    if (points.length == 0 || allPositions[n] - points[points.length - 1] > 0.001) {
+      points.push(allPositions[n]);
+    }
   }
 
   // coloured area
-  g.fillStyle = color;
-  g.globalAlpha = 0.25;
-  g.beginPath();
-  g.moveTo(getX(0), getY(0));
-  for (var a = 0; a < xs.length; a++) { g.lineTo(getX(xs[a]), getY(ys[a])); }
-  g.lineTo(getX(L), getY(0));
-  g.fill();
-  g.globalAlpha = 1;
-
-  // light vertical lines at the key points
-  g.strokeStyle = "#bbb";
-  g.lineWidth = 1;
-  g.setLineDash([4, 4]);
-  for (var v = 0; v < pts.length; v++) {
-    g.beginPath();
-    g.moveTo(getX(pts[v]), top);
-    g.lineTo(getX(pts[v]), top + plotH);
-    g.stroke();
+  pen.fillStyle = color;
+  pen.globalAlpha = 0.25;
+  pen.beginPath();
+  pen.moveTo(toPixelX(0), toPixelY(0));
+  for (var a = 0; a < xValues.length; a++) {
+    pen.lineTo(toPixelX(xValues[a]), toPixelY(yValues[a]));
   }
-  g.setLineDash([]);
+  pen.lineTo(toPixelX(beamLength), toPixelY(0));
+  pen.fill();
+  pen.globalAlpha = 1;
 
-  // line
-  g.strokeStyle = color;
-  g.lineWidth = 2;
-  g.beginPath();
-  g.moveTo(getX(xs[0]), getY(ys[0]));
-  for (var b = 1; b < xs.length; b++) { g.lineTo(getX(xs[b]), getY(ys[b])); }
-  g.stroke();
+  // light dashed vertical lines at the key points
+  pen.strokeStyle = "#bbb";
+  pen.lineWidth = 1;
+  pen.setLineDash([4, 4]);
+  for (var v = 0; v < points.length; v++) {
+    pen.beginPath();
+    pen.moveTo(toPixelX(points[v]), topMargin);
+    pen.lineTo(toPixelX(points[v]), topMargin + plotHeight);
+    pen.stroke();
+  }
+  pen.setLineDash([]);
+
+  // the graph line
+  pen.strokeStyle = color;
+  pen.lineWidth = 2;
+  pen.beginPath();
+  pen.moveTo(toPixelX(xValues[0]), toPixelY(yValues[0]));
+  for (var b = 1; b < xValues.length; b++) {
+    pen.lineTo(toPixelX(xValues[b]), toPixelY(yValues[b]));
+  }
+  pen.stroke();
 
   // zero line
-  g.strokeStyle = "black";
-  g.lineWidth = 1;
-  g.beginPath();
-  g.moveTo(left, getY(0));
-  g.lineTo(left + plotW, getY(0));
-  g.stroke();
+  pen.strokeStyle = "black";
+  pen.lineWidth = 1;
+  pen.beginPath();
+  pen.moveTo(leftMargin, toPixelY(0));
+  pen.lineTo(leftMargin + plotWidth, toPixelY(0));
+  pen.stroke();
 
   // title
-  g.fillStyle = "black";
-  g.font = "13px Arial";
-  g.textAlign = "left";
-  g.fillText(title, 5, 16);
+  pen.fillStyle = "black";
+  pen.font = "13px Arial";
+  pen.textAlign = "left";
+  pen.fillText(title, 5, 16);
 
   // dots and values at every key point
-  g.font = "12px Arial";
+  pen.font = "12px Arial";
   var lastLabelX = -100;
-  for (var k = 0; k < pts.length; k++) {
-    var x = pts[k];
-    var rightVal = getVal(x);                       // value just after x
-    var leftVal = (x <= 0) ? 0 : getVal(x - 1e-7);  // value just before x
-    var jump = Math.abs(rightVal - leftVal) > 0.001;
-    var vals = jump ? [leftVal, rightVal] : [rightVal];
 
-    for (var t = 0; t < vals.length; t++) {
-      var val = Math.round(vals[t] * 1000) / 1000;
-      var px = getX(x), py = getY(val);
+  for (var k = 0; k < points.length; k++) {
+    var x = points[k];
+    var valueAfter = getValueAt(x);                              // value just after x
+    var valueBefore = 0;
+    if (x > 0) { valueBefore = getValueAt(x - 0.0000001); }      // value just before x
+    var hasJump = Math.abs(valueAfter - valueBefore) > 0.001;
 
-      g.fillStyle = color;
-      g.beginPath();
-      g.arc(px, py, 4, 0, Math.PI * 2);
-      g.fill();
+    var valuesToShow = [valueAfter];
+    if (hasJump) { valuesToShow = [valueBefore, valueAfter]; }
+
+    for (var t = 0; t < valuesToShow.length; t++) {
+      var value = Math.round(valuesToShow[t] * 1000) / 1000;
+      var dotX = toPixelX(x);
+      var dotY = toPixelY(value);
+
+      pen.fillStyle = color;
+      pen.beginPath();
+      pen.arc(dotX, dotY, 4, 0, Math.PI * 2);
+      pen.fill();
 
       // put the text above or below the dot, away from the zero line
-      var above = (val >= 0) != flip;
-      var ty = above ? py - 8 : py + 16;
-      if (jump) {
-        g.textAlign = (t == 0) ? "right" : "left";
-        g.fillText(val.toFixed(2), px + (t == 0 ? -6 : 6), ty);
+      var textAbove = (value >= 0) != flipUpsideDown;
+      var textY = dotY + 16;
+      if (textAbove) { textY = dotY - 8; }
+
+      if (hasJump) {
+        if (t == 0) {
+          pen.textAlign = "right";
+          pen.fillText(value.toFixed(2), dotX - 6, textY);
+        } else {
+          pen.textAlign = "left";
+          pen.fillText(value.toFixed(2), dotX + 6, textY);
+        }
       } else {
-        g.textAlign = "center";
-        g.fillText(val.toFixed(2), px, ty);
+        pen.textAlign = "center";
+        pen.fillText(value.toFixed(2), dotX, textY);
       }
     }
 
-    // x position under the graph (skip if it would overlap the previous one)
-    g.fillStyle = "black";
-    g.textAlign = "center";
-    if (px - lastLabelX > 30) {
-      g.fillText(Math.round(x * 100) / 100 + "", getX(x), canvas.height - 8);
-      lastLabelX = getX(x);
+    // x position under the graph (skipped if it would overlap the previous one)
+    pen.fillStyle = "black";
+    pen.textAlign = "center";
+    if (toPixelX(x) - lastLabelX > 30) {
+      pen.fillText(Math.round(x * 100) / 100 + "", toPixelX(x), canvas.height - 8);
+      lastLabelX = toPixelX(x);
     }
   }
-  g.fillText("m", left + plotW + 18, canvas.height - 8);
+  pen.fillText("m", leftMargin + plotWidth + 18, canvas.height - 8);
 }
 
 // ---------- start ----------
-showList();
+showLoadList();
 calculate();
-
-// if already logged in during this browser session, skip the login screen
-if (sessionStorage.getItem("loggedInUser")) { showApp(); }
 </script>
 
 </body>
