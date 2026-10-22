@@ -22,14 +22,26 @@
   <h3>1. Beam</h3>
   Length (m): <input id="length" type="number" value="10"><br>
   Support:
-  <select id="support">
+  <select id="support" onchange="updateSupport(); calculate()">
     <option value="simple">Simply supported</option>
     <option value="left">Fixed at left end</option>
     <option value="right">Fixed at right end</option>
+    <option value="both">Fixed at both ends</option>
   </select><br>
-  Pin position (m): <input id="pin" type="number" value="0">
-  Roller position (m): <input id="roller" type="number" value="8"><br>
-  <small>Pin and roller are used only for simply supported beams.</small>
+  <div id="pinRoller">
+    Support 1:
+    <select id="type1" onchange="calculate()">
+      <option value="pin">Pin</option>
+      <option value="roller">Roller</option>
+    </select>
+    at x (m): <input id="pin" type="number" value="0"><br>
+    Support 2:
+    <select id="type2" onchange="calculate()">
+      <option value="roller">Roller</option>
+      <option value="pin">Pin</option>
+    </select>
+    at x (m): <input id="roller" type="number" value="8">
+  </div>
 
   <h3>2. Add a load</h3>
   Load type:
@@ -53,7 +65,13 @@
 
 <div class="box">
   <pre id="result"></pre>
-  <canvas id="canvas0" width="900" height="230"></canvas>
+  <div>
+    <b>Check any point:</b>
+    Distance x from the left end (m): <input id="pointX" type="number" step="any" oninput="showPoint()">
+    <button onclick="showPoint()">Show values</button>
+    <pre id="pointResult"></pre>
+  </div>
+  <canvas id="canvas0" width="900" height="270"></canvas>
   <canvas id="canvas2" width="900" height="240"></canvas>
   <canvas id="canvas3" width="900" height="240"></canvas>
 </div>
@@ -81,6 +99,15 @@ var loads = [
 var forces = [];
 var moments = [];
 var reactionMarks = [];
+
+function updateSupport() {
+  var support = document.getElementById("support").value;
+  if (support == "simple") {
+    document.getElementById("pinRoller").style.display = "block";
+  } else {
+    document.getElementById("pinRoller").style.display = "none";
+  }
+}
 
 function updateForm() {
   var type = document.getElementById("type").value;
@@ -175,11 +202,45 @@ function addMarks(list, x, before, after, hasBefore, hasAfter) {
   }
 }
 
+function describePoint(name, before, after, hasBefore, hasAfter, unit) {
+  var b = Math.round(before * 100) / 100;
+  var a = Math.round(after * 100) / 100;
+  if (hasBefore && hasAfter && Math.abs(before - after) >= 0.005) {
+    return name + ": " + b.toFixed(2) + " " + unit + " just before, " + a.toFixed(2) + " " + unit + " just after\n";
+  }
+  if (hasAfter) { return name + " = " + a.toFixed(2) + " " + unit + "\n"; }
+  return name + " = " + b.toFixed(2) + " " + unit + "\n";
+}
+
+function showPoint() {
+  var box = document.getElementById("pointResult");
+  var typed = document.getElementById("pointX").value;
+  var L = Number(document.getElementById("length").value);
+  if (typed === "") {
+    box.innerText = "Type a distance x to see the values at that point.";
+    return;
+  }
+  var x = Number(typed);
+  if (x < 0 || x > L) {
+    box.innerText = "x must be between 0 and " + L + " m.";
+    return;
+  }
+  var before = getInternal(x - 0.000001);
+  var after = getInternal(x);
+  var out = "At x = " + x + " m from the left end:\n";
+  out = out + describePoint("Shear force V     ", before.V, after.V, x > 0, true, "kN");
+  out = out + describePoint("Bending moment M  ", before.M, after.M, x > 0, true, "kN.m");
+  out = out + "(positive M = sagging, negative M = hogging)";
+  box.innerText = out;
+}
+
 function calculate() {
   var L = Number(document.getElementById("length").value);
   var support = document.getElementById("support").value;
   var pin = Number(document.getElementById("pin").value);
   var roller = Number(document.getElementById("roller").value);
+  var name1 = document.getElementById("type1").value;
+  var name2 = document.getElementById("type2").value;
 
   forces = [];
   moments = [];
@@ -218,15 +279,48 @@ function calculate() {
 
   var text = "SUPPORT REACTIONS\n";
   if (support == "simple") {
-    if (roller == pin) { alert("Pin and roller cannot be at the same place"); return; }
+    if (roller == pin) { alert("The two supports cannot be at the same place"); return; }
     var rollerReaction = momentAbout(pin) / (roller - pin);
     var pinReaction = totalForce - rollerReaction;
     forces.push({ x: pin, F: -pinReaction });
     forces.push({ x: roller, F: -rollerReaction });
-    text = text + "Vertical at pin    (x=" + pin + "): " + pinReaction.toFixed(2) + " kN (up)\n";
-    text = text + "Vertical at roller (x=" + roller + "): " + rollerReaction.toFixed(2) + " kN (up)\n";
-    reactionMarks.push({ x: pin, line: 0, text: "R = " + pinReaction.toFixed(2) + " kN" });
-    reactionMarks.push({ x: roller, line: 0, text: "R = " + rollerReaction.toFixed(2) + " kN" });
+    text = text + "Vertical at support 1, " + name1 + " (x=" + pin + "): " + pinReaction.toFixed(2) + " kN (up)\n";
+    text = text + "Vertical at support 2, " + name2 + " (x=" + roller + "): " + rollerReaction.toFixed(2) + " kN (up)\n";
+    if (name1 == name2) {
+      text = text + "Note: with vertical loads only, two " + name1 + "s give the same result as a pin and a roller.\n";
+    }
+    reactionMarks.push({ x: pin, line: 0, text: "R = " + pinReaction.toFixed(2) + " kN (x = " + pin + " m)" });
+    reactionMarks.push({ x: roller, line: 0, text: "R = " + rollerReaction.toFixed(2) + " kN (x = " + roller + " m)" });
+  } else if (support == "both") {
+    var I0 = 0;
+    var J0 = 0;
+    for (var g1 = 0; g1 < forces.length; g1++) {
+      var d1 = L - forces[g1].x;
+      I0 = I0 - forces[g1].F * d1 * d1 / 2;
+      J0 = J0 - forces[g1].F * d1 * d1 * d1 / 6;
+    }
+    for (var g2 = 0; g2 < moments.length; g2++) {
+      var d2 = L - moments[g2].x;
+      I0 = I0 + moments[g2].M * d2;
+      J0 = J0 + moments[g2].M * d2 * d2 / 2;
+    }
+    var det = L * L * L * L / 12;
+    var leftForce = (-I0 * L * L / 2 + L * J0) / det;
+    var leftMoment = (-J0 * L * L / 2 + I0 * L * L * L / 6) / det;
+    var rightForce = totalForce - leftForce;
+    var rightMoment = rightForce * L - leftMoment - momentAbout(0);
+    forces.push({ x: 0, F: -leftForce });
+    moments.push({ x: 0, M: leftMoment });
+    forces.push({ x: L, F: -rightForce });
+    moments.push({ x: L, M: rightMoment });
+    text = text + "Vertical at left wall  (x=0): " + leftForce.toFixed(2) + " kN (up)\n";
+    text = text + "Moment at left wall: " + leftMoment.toFixed(2) + " kN.m (clockwise)\n";
+    text = text + "Vertical at right wall (x=" + L + "): " + rightForce.toFixed(2) + " kN (up)\n";
+    text = text + "Moment at right wall: " + rightMoment.toFixed(2) + " kN.m (clockwise)\n";
+    reactionMarks.push({ x: 0, line: 0, text: "R = " + leftForce.toFixed(2) + " kN (x = 0 m)" });
+    reactionMarks.push({ x: 0, line: 1, text: "M = " + leftMoment.toFixed(2) + " kN.m" });
+    reactionMarks.push({ x: L, line: 0, text: "R = " + rightForce.toFixed(2) + " kN (x = " + L + " m)" });
+    reactionMarks.push({ x: L, line: 1, text: "M = " + rightMoment.toFixed(2) + " kN.m" });
   } else {
     var wall = 0;
     if (support == "right") { wall = L; }
@@ -235,7 +329,7 @@ function calculate() {
     moments.push({ x: wall, M: wallMoment });
     text = text + "Vertical at wall (x=" + wall + "): " + totalForce.toFixed(2) + " kN (up)\n";
     text = text + "Moment at wall: " + wallMoment.toFixed(2) + " kN.m (clockwise)\n";
-    reactionMarks.push({ x: wall, line: 0, text: "R = " + totalForce.toFixed(2) + " kN" });
+    reactionMarks.push({ x: wall, line: 0, text: "R = " + totalForce.toFixed(2) + " kN (x = " + wall + " m)" });
     reactionMarks.push({ x: wall, line: 1, text: "M = " + wallMoment.toFixed(2) + " kN.m" });
   }
 
@@ -287,6 +381,7 @@ function calculate() {
   drawLoads(L, support, pin, roller);
   drawGraph("canvas2", xs, Vs, "blue", "Shear force diagram V (kN)", false, marksV);
   drawGraph("canvas3", xs, Ms, "red", "Bending moment diagram M (kN.m)  (positive is drawn downward)", true, marksM);
+  showPoint();
 }
 
 function drawArrow(g, x1, y1, x2, y2, color) {
@@ -308,7 +403,7 @@ function drawArrow(g, x1, y1, x2, y2, color) {
 function drawLoads(L, support, pin, roller) {
   var canvas = document.getElementById("canvas0");
   var g = canvas.getContext("2d");
-  var beamY = 120;
+  var beamY = 140;
   g.clearRect(0, 0, canvas.width, canvas.height);
   g.font = "13px Arial";
   g.textAlign = "center";
@@ -327,6 +422,7 @@ function drawLoads(L, support, pin, roller) {
   g.fillStyle = "gray";
   if (support == "simple") {
     var spots = [pin, roller];
+    var kinds = [document.getElementById("type1").value, document.getElementById("type2").value];
     for (var s = 0; s < 2; s++) {
       var px = getX(spots[s]);
       g.beginPath();
@@ -334,18 +430,34 @@ function drawLoads(L, support, pin, roller) {
       g.lineTo(px - 10, beamY + 25);
       g.lineTo(px + 10, beamY + 25);
       g.fill();
+      if (kinds[s] == "roller") {
+        g.beginPath();
+        g.arc(px - 5, beamY + 30, 4, 0, 6.2832);
+        g.fill();
+        g.beginPath();
+        g.arc(px + 5, beamY + 30, 4, 0, 6.2832);
+        g.fill();
+      } else {
+        g.fillRect(px - 14, beamY + 25, 28, 3);
+      }
     }
   } else {
     var wallX = getX(0);
     if (support == "right") { wallX = getX(L); }
     g.fillRect(wallX - 4, beamY - 30, 8, 60);
+    if (support == "both") { g.fillRect(getX(L) - 4, beamY - 30, 8, 60); }
   }
 
   g.fillStyle = "darkred";
   g.font = "12px Arial";
   for (var z = 0; z < reactionMarks.length; z++) {
-    g.fillText(reactionMarks[z].text, getX(reactionMarks[z].x), beamY + 42 + reactionMarks[z].line * 16);
+    var rx = getX(reactionMarks[z].x);
+    g.textAlign = "center";
+    if (rx < 90) { g.textAlign = "left"; rx = 5; }
+    if (rx > canvas.width - 90) { g.textAlign = "right"; rx = canvas.width - 5; }
+    g.fillText(reactionMarks[z].text, rx, beamY + 42 + reactionMarks[z].line * 16);
   }
+  g.textAlign = "center";
 
   var biggest = 1;
   for (var i = 0; i < loads.length; i++) {
@@ -364,7 +476,7 @@ function drawLoads(L, support, pin, roller) {
       if (p[1] < 0) { dir = -1; }
       drawArrow(g, getX(p[0]), beamY - dir * 75, getX(p[0]), beamY - dir * 6, "red");
       g.fillStyle = "red";
-      g.fillText(p[1] + " kN", getX(p[0]), beamY - dir * 81 + (dir < 0 ? 14 : 0));
+      g.fillText(p[1] + " kN (x = " + p[0] + " m)", getX(p[0]), beamY - dir * (81 + (j % 3) * 14) + (dir < 0 ? 14 : 0));
     }
 
     if (type == "udl" || type == "uvl") {
@@ -387,14 +499,15 @@ function drawLoads(L, support, pin, roller) {
       g.fillStyle = "blue";
       var name = w1 + " kN/m";
       if (type == "uvl") { name = w1 + " to " + w2 + " kN/m"; }
-      g.fillText(name, getX((p[0] + p[1]) / 2), beamY - 70);
+      name = name + " (x = " + p[0] + " to " + p[1] + " m)";
+      g.fillText(name, getX((p[0] + p[1]) / 2), beamY - 70 - (j % 3) * 14);
     }
 
     if (type == "moment") {
       g.fillStyle = "purple";
       var way = "anticlockwise ";
       if (p[1] > 0) { way = "clockwise "; }
-      g.fillText(way + Math.abs(p[1]) + " kN.m", getX(p[0]), beamY + 85);
+      g.fillText(way + Math.abs(p[1]) + " kN.m (x = " + p[0] + " m)", getX(p[0]), beamY + 85);
     }
   }
 }
@@ -449,9 +562,27 @@ function drawGraph(id, xs, ys, color, title, flip, marks) {
   g.font = "13px Arial";
   g.textAlign = "left";
   g.fillText(title, 5, 16);
+
+  var places = [];
+  for (var u = 0; u < marks.length; u++) {
+    if (places.indexOf(marks[u].x) < 0) { places.push(marks[u].x); }
+  }
+  places.sort(function (m1, m2) { return m1 - m2; });
+  g.font = "12px Arial";
   g.textAlign = "center";
-  g.fillText("0", left, canvas.height - 8);
-  g.fillText(L + " m", left + plotW, canvas.height - 8);
+  for (var n = 0; n < places.length; n++) {
+    var lineX = getX(places[n]);
+    g.setLineDash([3, 3]);
+    g.strokeStyle = "gray";
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(lineX, top);
+    g.lineTo(lineX, top + plotH);
+    g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = "black";
+    g.fillText((Math.round(places[n] * 100) / 100) + " m", lineX, top + plotH + 14 + (n % 2) * 12);
+  }
 
   for (var m = 0; m < marks.length; m++) {
     var px = getX(marks[m].x);
@@ -475,6 +606,7 @@ function drawGraph(id, xs, ys, color, title, flip, marks) {
   }
 }
 
+updateSupport();
 updateForm();
 showList();
 calculate();
